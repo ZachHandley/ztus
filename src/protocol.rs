@@ -508,10 +508,16 @@ impl TusProtocol {
 
                 Ok(upload_url)
             }
-            status => Err(ZtusError::ProtocolError(format!(
-                "Create upload failed with status: {}",
-                status
-            ))),
+            status => {
+                // Try to read error response body for better error messages
+                let error_body = response.text().await.unwrap_or_else(|_| "<unable to read response body>".to_string());
+                let error_msg = if error_body.is_empty() || error_body.contains('<') {
+                    format!("Create upload failed with status: {}", status)
+                } else {
+                    format!("Create upload failed with status: {} - Server error: {}", status, error_body.trim())
+                };
+                Err(ZtusError::ProtocolError(error_msg))
+            }
         }
     }
 

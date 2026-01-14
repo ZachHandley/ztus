@@ -297,8 +297,21 @@ async fn main() -> Result<()> {
             }
 
             // Parse and set metadata
-            if !metadata.is_empty() {
-                let parsed_metadata = parse_metadata(&metadata)?;
+            let mut parsed_metadata = if !metadata.is_empty() {
+                parse_metadata(&metadata)?
+            } else {
+                HashMap::new()
+            };
+
+            // Auto-add filename from file path if not provided
+            if !parsed_metadata.contains_key("filename") {
+                if let Some(filename) = file_path.file_name().and_then(|n| n.to_str()) {
+                    parsed_metadata.insert("filename".to_string(), filename.to_string());
+                    tracing::debug!("Auto-added filename metadata: {}", filename);
+                }
+            }
+
+            if !parsed_metadata.is_empty() {
                 tracing::debug!("Parsed metadata: {:?}", parsed_metadata);
                 config.metadata = parsed_metadata.into_iter().collect();
             }
