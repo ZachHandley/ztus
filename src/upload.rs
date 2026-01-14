@@ -183,7 +183,10 @@ impl UploadManager {
                     offset
                 );
             }
-            if self.config.verbose && n < self.config.chunk_size && offset + n as u64 < file_size {
+            if self.config.verbose
+                && n < self.config.chunk_size
+                && offset + (n as u64) < file_size
+            {
                 tracing::debug!(
                     "Short read before EOF: {} bytes (expected {} bytes)",
                     n,
