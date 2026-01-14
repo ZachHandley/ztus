@@ -74,6 +74,10 @@ enum Commands {
         /// Values will be base64-encoded per TUS specification
         #[arg(long, value_name = "KEY:VALUE")]
         metadata: Vec<String>,
+
+        /// Custom HTTP headers in key:value format (can be used multiple times)
+        #[arg(long, alias = "headers", value_name = "KEY:VALUE")]
+        header: Vec<String>,
     },
 
     /// Resume an incomplete upload
@@ -83,6 +87,10 @@ enum Commands {
 
         /// TUS upload endpoint URL
         url: String,
+
+        /// Custom HTTP headers in key:value format (can be used multiple times)
+        #[arg(long, alias = "headers", value_name = "KEY:VALUE")]
+        header: Vec<String>,
     },
 
     /// Download a file from a URL
@@ -187,6 +195,44 @@ fn parse_metadata(metadata_args: &[String]) -> Result<HashMap<String, String>> {
     Ok(metadata)
 }
 
+/// Parse custom headers from command line arguments
+///
+/// Accepts formats:
+/// - "key:value" - single key-value pair
+/// - "key: value" - key-value pair with space (space will be trimmed)
+///
+/// Returns a Vec of key-value tuples
+fn parse_headers(header_args: &[String]) -> Result<Vec<(String, String)>> {
+    let mut headers = Vec::new();
+
+    for arg in header_args {
+        // Try to parse as "key:value" format
+        if let Some((key, value)) = arg.split_once(':') {
+            let key = key.trim();
+            let value = value.trim();
+
+            if key.is_empty() {
+                return Err(error::ZtusError::ConfigError(
+                    "Header key cannot be empty".to_string()
+                ));
+            }
+            if value.is_empty() {
+                return Err(error::ZtusError::ConfigError(
+                    format!("Header value for key '{}' cannot be empty", key)
+                ));
+            }
+            headers.push((key.to_string(), value.to_string()));
+        } else {
+            // If no colon found, this is an error
+            return Err(error::ZtusError::ConfigError(
+                format!("Invalid header format '{}'. Expected 'key:value'", arg)
+            ));
+        }
+    }
+
+    Ok(headers)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -215,6 +261,7 @@ async fn main() -> Result<()> {
             checksum,
             no_checksum,
             metadata,
+            header,
         } => {
             tracing::info!("Uploading {} to {}", file, url);
 
@@ -256,17 +303,31 @@ async fn main() -> Result<()> {
                 config.metadata = parsed_metadata.into_iter().collect();
             }
 
+            // Parse and set custom headers
+            if !header.is_empty() {
+                let parsed_headers = parse_headers(&header)?;
+                tracing::debug!("Parsed headers: {:?}", parsed_headers);
+                config.headers = parsed_headers;
+            }
+
             // Validate config
             config.validate()?;
 
             client.upload_with_config(file_path, &url, &config).await?;
         }
 
-        Commands::Resume { file, url } => {
+        Commands::Resume { file, url, header } => {
             tracing::info!("Resuming upload {} to {}", file, url);
 
             let file_path = std::path::Path::new(&file);
-            let config = client.upload_config().clone();
+            let mut config = client.upload_config().clone();
+
+            // Parse and set custom headers
+            if !header.is_empty() {
+                let parsed_headers = parse_headers(&header)?;
+                tracing::debug!("Parsed headers: {:?}", parsed_headers);
+                config.headers = parsed_headers;
+            }
 
             client.resume_with_config(file_path, &url, &config).await?;
         }
@@ -528,6 +589,85 @@ mod tests {
         assert_eq!(result.get("filename").unwrap(), "test file.txt");
         assert_eq!(result.get("path").unwrap(), "/path/to/file");
         assert_eq!(result.get("url").unwrap(), "https://example.com");
+    }
+
+    #[test]
+    fn test_parse_headers_single() {
+        let headers = vec!["X-API-Key:secret123".to_string()];
+        let result = parse_headers(&headers).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0, "X-API-Key");
+        assert_eq!(result[0].1, "secret123");
+    }
+
+    #[test]
+    fn test_parse_headers_multiple() {
+        let headers = vec![
+            "X-API-Key:secret123".to_string(),
+            "Authorization:Bearer token".to_string(),
+            "Content-Type:application/json".to_string(),
+        ];
+        let result = parse_headers(&headers).unwrap();
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0], (String::from("X-API-Key"), String::from("secret123")));
+        assert_eq!(result[1], (String::from("Authorization"), String::from("Bearer token")));
+        assert_eq!(result[2], (String::from("Content-Type"), String::from("application/json")));
+    }
+
+    #[test]
+    fn test_parse_headers_with_spaces() {
+        let headers = vec![
+            "X-API-Key: secret123".to_string(),
+            "Authorization: Bearer token".to_string(),
+        ];
+        let result = parse_headers(&headers).unwrap();
+        assert_eq!(result.len(), 2);
+        // Spaces should be trimmed
+        assert_eq!(result[0].0, "X-API-Key");
+        assert_eq!(result[0].1, "secret123");
+        assert_eq!(result[1].0, "Authorization");
+        assert_eq!(result[1].1, "Bearer token");
+    }
+
+    #[test]
+    fn test_parse_headers_with_colon_in_value() {
+        let headers = vec!["Time:10:30".to_string()];
+        let result = parse_headers(&headers).unwrap();
+        assert_eq!(result.len(), 1);
+        // split_once only splits on the first colon, so value should be "10:30"
+        assert_eq!(result[0].0, "Time");
+        assert_eq!(result[0].1, "10:30");
+    }
+
+    #[test]
+    fn test_parse_headers_empty_value() {
+        let headers = vec!["X-API-Key:".to_string()];
+        let result = parse_headers(&headers);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cannot be empty"));
+    }
+
+    #[test]
+    fn test_parse_headers_empty_key() {
+        let headers = vec![":secret123".to_string()];
+        let result = parse_headers(&headers);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("key cannot be empty"));
+    }
+
+    #[test]
+    fn test_parse_headers_no_colon() {
+        let headers = vec!["X-API-Key".to_string()];
+        let result = parse_headers(&headers);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Invalid header format"));
+    }
+
+    #[test]
+    fn test_parse_headers_empty_vec() {
+        let headers = vec![];
+        let result = parse_headers(&headers).unwrap();
+        assert_eq!(result.len(), 0);
     }
 }
 

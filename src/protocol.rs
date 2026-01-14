@@ -294,6 +294,7 @@ impl std::fmt::Display for UploadInfo {
 pub struct TusProtocol {
     client: Client,
     base_url: String,
+    headers: Vec<(String, String)>,
 }
 
 impl TusProtocol {
@@ -307,14 +308,43 @@ impl TusProtocol {
         Ok(Self {
             client,
             base_url,
+            headers: Vec::new(),
         })
+    }
+
+    /// Create a new TUS protocol client with custom headers
+    pub fn with_headers(base_url: String, timeout: Duration, headers: Vec<(String, String)>) -> Result<Self> {
+        let client = Client::builder()
+            .timeout(timeout)
+            .build()
+            .map_err(ZtusError::from)?;
+
+        Ok(Self {
+            client,
+            base_url,
+            headers,
+        })
+    }
+
+    /// Add custom headers to a request builder
+    fn apply_headers(
+        &self,
+        mut request: reqwest::RequestBuilder,
+    ) -> reqwest::RequestBuilder {
+        for (key, value) in &self.headers {
+            request = request.header(key, value);
+        }
+        request
     }
 
     /// Discover server capabilities via OPTIONS request
     pub async fn discover_capabilities(&self) -> Result<ServerCapabilities> {
-        let response = self
+        let request = self
             .client
-            .request(Method::OPTIONS, &self.base_url)
+            .request(Method::OPTIONS, &self.base_url);
+        let request = self.apply_headers(request);
+
+        let response = request
             .send()
             .await
             .map_err(ZtusError::from)?;
@@ -417,6 +447,9 @@ impl TusProtocol {
     ) -> Result<String> {
         let mut request = self.client.post(&self.base_url);
 
+        // Apply custom headers first (so TUS headers can override if needed)
+        request = self.apply_headers(request);
+
         // Set TUS version header
         request = request.header(TUS_RESUMABLE, TUS_VERSION);
 
@@ -484,10 +517,13 @@ impl TusProtocol {
 
     /// Query upload status (HEAD request)
     pub async fn get_upload_offset(&self, upload_url: &str) -> Result<u64> {
-        let response = self
+        let request = self
             .client
             .head(upload_url)
-            .header(TUS_RESUMABLE, TUS_VERSION)
+            .header(TUS_RESUMABLE, TUS_VERSION);
+        let request = self.apply_headers(request);
+
+        let response = request
             .send()
             .await
             .map_err(ZtusError::from)?;
@@ -522,13 +558,16 @@ impl TusProtocol {
         offset: u64,
         data: Vec<u8>,
     ) -> Result<u64> {
-        let response = self
+        let request = self
             .client
             .patch(upload_url)
             .header(TUS_RESUMABLE, TUS_VERSION)
             .header("Content-Type", "application/offset+octet-stream")
             .header(UPLOAD_OFFSET, offset.to_string())
-            .body(data)
+            .body(data);
+        let request = self.apply_headers(request);
+
+        let response = request
             .send()
             .await
             .map_err(ZtusError::from)?;
@@ -591,10 +630,13 @@ impl TusProtocol {
 
     /// Terminate an upload (DELETE request)
     pub async fn terminate_upload(&self, upload_url: &str) -> Result<()> {
-        let response = self
+        let request = self
             .client
             .delete(upload_url)
-            .header(TUS_RESUMABLE, TUS_VERSION)
+            .header(TUS_RESUMABLE, TUS_VERSION);
+        let request = self.apply_headers(request);
+
+        let response = request
             .send()
             .await
             .map_err(ZtusError::from)?;

@@ -166,10 +166,19 @@ impl TusClient {
     /// Discover server capabilities
     pub async fn discover_capabilities(&self, url: &str) -> Result<crate::protocol::ServerCapabilities> {
         use std::time::Duration;
-        let protocol = crate::protocol::TusProtocol::new(
-            url.to_string(),
-            Duration::from_secs(self.config.upload.timeout),
-        )?;
+        let headers = self.config.upload.headers.clone();
+        let protocol = if headers.is_empty() {
+            crate::protocol::TusProtocol::new(
+                url.to_string(),
+                Duration::from_secs(self.config.upload.timeout),
+            )?
+        } else {
+            crate::protocol::TusProtocol::with_headers(
+                url.to_string(),
+                Duration::from_secs(self.config.upload.timeout),
+                headers,
+            )?
+        };
         protocol.discover_capabilities().await
     }
 
@@ -178,10 +187,19 @@ impl TusClient {
         use std::time::Duration;
         // Extract base URL from upload URL for protocol client creation
         let base_url = self.extract_base_url(upload_url);
-        let protocol = crate::protocol::TusProtocol::new(
-            base_url,
-            Duration::from_secs(self.config.upload.timeout),
-        )?;
+        let headers = self.config.upload.headers.clone();
+        let protocol = if headers.is_empty() {
+            crate::protocol::TusProtocol::new(
+                base_url,
+                Duration::from_secs(self.config.upload.timeout),
+            )?
+        } else {
+            crate::protocol::TusProtocol::with_headers(
+                base_url,
+                Duration::from_secs(self.config.upload.timeout),
+                headers,
+            )?
+        };
         protocol.terminate_upload(upload_url).await
     }
 

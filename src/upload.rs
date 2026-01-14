@@ -23,10 +23,19 @@ pub struct UploadManager {
 impl UploadManager {
     /// Create a new upload manager
     pub fn new(base_url: String, config: UploadConfig, state_dir: PathBuf) -> Result<Self> {
-        let protocol = TusProtocol::new(
-            base_url,
-            Duration::from_secs(config.timeout),
-        )?;
+        let headers = config.headers.clone();
+        let protocol = if headers.is_empty() {
+            TusProtocol::new(
+                base_url,
+                Duration::from_secs(config.timeout),
+            )?
+        } else {
+            TusProtocol::with_headers(
+                base_url,
+                Duration::from_secs(config.timeout),
+                headers,
+            )?
+        };
 
         let storage = StateStorage::new(state_dir)?;
 
