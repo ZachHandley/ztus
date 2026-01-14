@@ -111,18 +111,23 @@ impl UploadManager {
                 .map_err(ZtusError::from)?;
         }
 
-        // Create progress bar
+        // Create progress bar with percentage
         let progress = ProgressBar::new(file_size);
         progress.set_style(
             ProgressStyle::default_bar()
-                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
+                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({percent}%) {bytes_per_sec} ETA: {eta}")
                 .map_err(|e| ZtusError::ConfigError(e.to_string()))?
                 .progress_chars("##-")
         );
         progress.set_position(offset);
 
+        // Log chunk size being used
+        tracing::info!("Chunk size: {} MB", self.config.chunk_size / 1024 / 1024);
+        tracing::info!("Starting upload from offset: {} / {} bytes", offset, file_size);
+
         // Upload in chunks
         let mut buffer = vec![0u8; self.config.chunk_size];
+        let mut chunk_num = offset / self.config.chunk_size as u64;
 
         loop {
             // Read chunk
@@ -134,6 +139,16 @@ impl UploadManager {
 
             let chunk = buffer[..n].to_vec();
 
+            // Verbose logging for each chunk
+            if self.config.verbose {
+                tracing::debug!(
+                    "Uploading chunk #{}: {} bytes (offset: {})",
+                    chunk_num,
+                    n,
+                    offset
+                );
+            }
+
             // Upload chunk with retry logic
             let new_offset = self
                 .protocol
@@ -144,6 +159,11 @@ impl UploadManager {
                     self.config.max_retries,
                 )
                 .await?;
+
+            if self.config.verbose {
+                tracing::debug!("Chunk #{} complete, new offset: {}", chunk_num, new_offset);
+            }
+            chunk_num += 1;
 
             // Validate offset
             if new_offset != offset + n as u64 {

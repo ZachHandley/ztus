@@ -62,6 +62,10 @@ enum Commands {
         #[arg(short, long)]
         max_retries: Option<usize>,
 
+        /// Verbose output - show detailed upload progress
+        #[arg(short, long)]
+        verbose: bool,
+
         /// Checksum algorithm to use
         #[arg(long, value_name = "ALGO")]
         checksum: Option<ChecksumArg>,
@@ -258,6 +262,7 @@ async fn main() -> Result<()> {
             url,
             chunk_size,
             max_retries,
+            verbose,
             checksum,
             no_checksum,
             metadata,
@@ -276,6 +281,9 @@ async fn main() -> Result<()> {
             if let Some(retries) = max_retries {
                 config.max_retries = retries;
             }
+
+            // Set verbose flag
+            config.verbose = verbose;
 
             // Handle checksum configuration
             if no_checksum {

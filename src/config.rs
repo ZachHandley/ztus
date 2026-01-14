@@ -29,6 +29,10 @@ pub struct UploadConfig {
     /// Request timeout in seconds
     pub timeout: u64,
 
+    /// Verbose output - show detailed upload progress
+    #[serde(default)]
+    pub verbose: bool,
+
     /// Custom HTTP headers to include in requests
     pub headers: Vec<(String, String)>,
 
@@ -66,6 +70,7 @@ impl Default for UploadConfig {
             tus_version: DEFAULT_TUS_VERSION.to_string(),
             max_retries: 3,
             timeout: 30,
+            verbose: false,
             headers: Vec::new(),
             metadata: Vec::new(),
             verify_checksum: true,
