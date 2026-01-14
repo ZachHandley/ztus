@@ -11,7 +11,6 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-C target-cpu=native"
 
 jobs:
   build:
@@ -37,14 +36,14 @@ jobs:
 
           # macOS AMD64 (Intel)
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-latest
             use_cross: false
             artifact_name: ztus
             asset_name: ztus-darwin-amd64
 
           # macOS ARM64 (Apple Silicon)
           - target: aarch64-apple-darwin
-            os: macos-14
+            os: macos-latest
             use_cross: false
             artifact_name: ztus
             asset_name: ztus-darwin-arm64
@@ -111,13 +110,7 @@ jobs:
       - name: Strip binary (Linux/macOS)
         if: runner.os != 'Windows'
         run: |
-          target/${{ matrix.target }}/release/ztus
-
-      - name: Strip binary (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          strip target/${{ matrix.target }}/release/ztus.exe
-        shell: bash
+          strip target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
 
       - name: Prepare archive
         shell: bash
