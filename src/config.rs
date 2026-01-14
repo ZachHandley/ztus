@@ -14,6 +14,92 @@ pub const DEFAULT_CHUNK_SIZE: usize = 5 * 1024 * 1024;
 /// Default TUS protocol version
 pub const DEFAULT_TUS_VERSION: &str = "1.0.0";
 
+/// Default initial chunk size for adaptive uploads (10 MB)
+pub const DEFAULT_ADAPTIVE_INITIAL_CHUNK_SIZE: usize = 10 * 1024 * 1024;
+
+/// Default minimum chunk size for adaptive uploads (1 MB)
+pub const DEFAULT_ADAPTIVE_MIN_CHUNK_SIZE: usize = 1 * 1024 * 1024;
+
+/// Default maximum chunk size for adaptive uploads (200 MB)
+pub const DEFAULT_ADAPTIVE_MAX_CHUNK_SIZE: usize = 200 * 1024 * 1024;
+
+/// Default adaptation interval for adaptive uploads (5 chunks)
+pub const DEFAULT_ADAPTATION_INTERVAL: usize = 5;
+
+/// Default stability threshold for adaptive uploads (10%)
+pub const DEFAULT_STABILITY_THRESHOLD: f64 = 0.1;
+
+/// Configuration for adaptive chunk sizing during uploads
+///
+/// Adaptive chunk sizing allows the uploader to dynamically adjust chunk sizes
+/// based on network performance, optimizing for both speed and reliability.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdaptiveChunkConfig {
+    /// Whether adaptive chunk sizing is enabled
+    #[serde(default = "default_adaptive_enabled")]
+    pub enabled: bool,
+
+    /// Initial chunk size to start with (in bytes)
+    #[serde(default = "default_adaptive_initial_chunk_size")]
+    pub initial_chunk_size: usize,
+
+    /// Minimum chunk size allowed (in bytes)
+    #[serde(default = "default_adaptive_min_chunk_size")]
+    pub min_chunk_size: usize,
+
+    /// Maximum chunk size allowed (in bytes)
+    #[serde(default = "default_adaptive_max_chunk_size")]
+    pub max_chunk_size: usize,
+
+    /// Number of chunks to process before re-evaluating chunk size
+    #[serde(default = "default_adaptation_interval")]
+    pub adaptation_interval: usize,
+
+    /// Variance threshold for considering upload speeds stable (0.0-1.0)
+    ///
+    /// Lower values mean the system will only adjust chunk sizes when
+    /// upload speeds are very consistent. Default is 0.1 (10% variance).
+    #[serde(default = "default_stability_threshold")]
+    pub stability_threshold: f64,
+}
+
+impl Default for AdaptiveChunkConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            initial_chunk_size: DEFAULT_ADAPTIVE_INITIAL_CHUNK_SIZE,
+            min_chunk_size: DEFAULT_ADAPTIVE_MIN_CHUNK_SIZE,
+            max_chunk_size: DEFAULT_ADAPTIVE_MAX_CHUNK_SIZE,
+            adaptation_interval: DEFAULT_ADAPTATION_INTERVAL,
+            stability_threshold: DEFAULT_STABILITY_THRESHOLD,
+        }
+    }
+}
+
+fn default_adaptive_enabled() -> bool {
+    true
+}
+
+fn default_adaptive_initial_chunk_size() -> usize {
+    DEFAULT_ADAPTIVE_INITIAL_CHUNK_SIZE
+}
+
+fn default_adaptive_min_chunk_size() -> usize {
+    DEFAULT_ADAPTIVE_MIN_CHUNK_SIZE
+}
+
+fn default_adaptive_max_chunk_size() -> usize {
+    DEFAULT_ADAPTIVE_MAX_CHUNK_SIZE
+}
+
+fn default_adaptation_interval() -> usize {
+    DEFAULT_ADAPTATION_INTERVAL
+}
+
+fn default_stability_threshold() -> f64 {
+    DEFAULT_STABILITY_THRESHOLD
+}
+
 /// Configuration for TUS uploads
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UploadConfig {
@@ -48,6 +134,10 @@ pub struct UploadConfig {
 
     /// Checksum algorithm to use
     pub checksum_algorithm: ChecksumAlgorithm,
+
+    /// Adaptive chunk sizing configuration
+    #[serde(default)]
+    pub adaptive: AdaptiveChunkConfig,
 }
 
 /// Checksum algorithm options
@@ -80,6 +170,7 @@ impl Default for UploadConfig {
             metadata: Vec::new(),
             verify_checksum: true,
             checksum_algorithm: ChecksumAlgorithm::Sha256,
+            adaptive: AdaptiveChunkConfig::default(),
         }
     }
 }

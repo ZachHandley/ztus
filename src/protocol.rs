@@ -38,6 +38,7 @@ pub enum TusExtension {
 }
 
 impl TusExtension {
+    #[allow(dead_code)]
     pub fn as_str(&self) -> &str {
         match self {
             Self::Creation => "creation",
@@ -302,6 +303,11 @@ impl TusProtocol {
     pub fn new(base_url: String, timeout: Duration) -> Result<Self> {
         let client = Client::builder()
             .timeout(timeout)
+            .http2_prior_knowledge()           // Force HTTP/2
+            .pool_max_idle_per_host(1)         // Keep 1 connection alive
+            .pool_idle_timeout(Duration::from_secs(90))  // Longer keep-alive
+            .http2_keep_alive_interval(Duration::from_secs(30))  // Keep-alive pings
+            .http2_keep_alive_timeout(Duration::from_secs(10))
             .build()
             .map_err(ZtusError::from)?;
 
@@ -316,6 +322,11 @@ impl TusProtocol {
     pub fn with_headers(base_url: String, timeout: Duration, headers: Vec<(String, String)>) -> Result<Self> {
         let client = Client::builder()
             .timeout(timeout)
+            .http2_prior_knowledge()           // Force HTTP/2
+            .pool_max_idle_per_host(1)         // Keep 1 connection alive
+            .pool_idle_timeout(Duration::from_secs(90))  // Longer keep-alive
+            .http2_keep_alive_interval(Duration::from_secs(30))  // Keep-alive pings
+            .http2_keep_alive_timeout(Duration::from_secs(10))
             .build()
             .map_err(ZtusError::from)?;
 
@@ -681,8 +692,10 @@ impl TusProtocol {
                 Err(ZtusError::HttpError(_e)) if retries < max_retries => {
                     retries += 1;
 
-                    // Exponential backoff
-                    let delay = tokio::time::Duration::from_millis(100 * 2_u64.pow(retries as u32));
+                    // Exponential backoff with a 30s cap
+                    let delay_ms = 100_u64.saturating_mul(2_u64.pow(retries as u32));
+                    let delay_ms = delay_ms.min(30_000);
+                    let delay = tokio::time::Duration::from_millis(delay_ms);
                     tracing::warn!(
                         "Upload chunk failed (attempt {}/{}), retrying in {:?}",
                         retries,

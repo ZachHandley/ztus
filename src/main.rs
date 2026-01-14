@@ -54,9 +54,25 @@ enum Commands {
         /// TUS upload endpoint URL
         url: String,
 
-        /// Chunk size in bytes (default: 5MB)
+        /// Chunk size in bytes (default: 5MB). When specified, adaptive chunk sizing is disabled.
         #[arg(short, long)]
         chunk_size: Option<usize>,
+
+        /// Enable adaptive chunk sizing (default: true). Use --no-adaptive-chunk-size to disable.
+        #[arg(long, action = clap::ArgAction::SetTrue)]
+        adaptive_chunk_size: bool,
+
+        /// Disable adaptive chunk sizing
+        #[arg(long, action = clap::ArgAction::SetFalse, name = "no-adaptive-chunk-size")]
+        no_adaptive_chunk_size: bool,
+
+        /// Maximum chunk size in bytes for adaptive mode (default: 200MB)
+        #[arg(long, value_name = "SIZE")]
+        max_chunk_size: Option<usize>,
+
+        /// Minimum chunk size in bytes for adaptive mode (default: 1MB)
+        #[arg(long, value_name = "SIZE")]
+        min_chunk_size: Option<usize>,
 
         /// Disable resumable uploads (start fresh even if state exists)
         #[arg(long)]
@@ -289,7 +305,8 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Initialize tracing
-    let log_level = if cli.verbose {
+    let command_verbose = matches!(cli.command, Commands::Upload { verbose: true, .. });
+    let log_level = if cli.verbose || command_verbose {
         tracing::Level::DEBUG
     } else {
         tracing::Level::INFO
@@ -308,6 +325,10 @@ async fn main() -> Result<()> {
             file,
             url,
             chunk_size,
+            adaptive_chunk_size,
+            no_adaptive_chunk_size,
+            max_chunk_size,
+            min_chunk_size,
             no_resume,
             max_retries,
             verbose,
@@ -322,8 +343,34 @@ async fn main() -> Result<()> {
 
             let mut config = client.upload_config().clone();
 
+            // Handle chunk size configuration
+            // When --chunk-size is explicitly specified, disable adaptive mode
             if let Some(size) = chunk_size {
                 config.chunk_size = size;
+                config.adaptive.enabled = false;
+                tracing::debug!("Fixed chunk size set to {} bytes, adaptive chunk sizing disabled", size);
+            }
+
+            // Handle adaptive chunk sizing flags
+            // --no-adaptive-chunk-size overrides --adaptive-chunk-size
+            if no_adaptive_chunk_size {
+                config.adaptive.enabled = false;
+                tracing::debug!("Adaptive chunk sizing explicitly disabled");
+            } else if adaptive_chunk_size {
+                config.adaptive.enabled = true;
+                tracing::debug!("Adaptive chunk sizing explicitly enabled");
+            }
+
+            // Handle max chunk size for adaptive mode
+            if let Some(size) = max_chunk_size {
+                config.adaptive.max_chunk_size = size;
+                tracing::debug!("Adaptive max chunk size set to {} bytes", size);
+            }
+
+            // Handle min chunk size for adaptive mode
+            if let Some(size) = min_chunk_size {
+                config.adaptive.min_chunk_size = size;
+                tracing::debug!("Adaptive min chunk size set to {} bytes", size);
             }
 
             if no_resume {

@@ -9,7 +9,7 @@ use crate::protocol::TusProtocol;
 use crate::storage::{StateStorage, UploadState};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
@@ -104,7 +104,7 @@ impl UploadManager {
                 } else {
                 // Verify file hasn't changed
                 if state.file_size != file_size {
-                    tracing::warn!("File size changed, starting new upload");
+                    tracing::info!("File size differs from saved state, starting new upload");
                     self.start_new_upload(&file_path_buf, file_size).await?
                 } else {
                     tracing::info!("Resuming existing upload from offset: {}", state.offset);
@@ -160,11 +160,34 @@ impl UploadManager {
         tracing::info!("Chunk size: {} MB", self.config.chunk_size / 1024 / 1024);
         tracing::info!("Starting upload from offset: {} / {} bytes", offset, file_size);
 
+        // Initialize adaptive chunk sizing
+        let (mut current_chunk_size, mut throughput_history) = if self.config.adaptive.enabled {
+            tracing::info!("Adaptive chunk sizing enabled");
+            tracing::info!("Initial chunk size: {} MB", self.config.adaptive.initial_chunk_size / 1024 / 1024);
+            tracing::info!("Chunk size range: {} MB - {} MB",
+                self.config.adaptive.min_chunk_size / 1024 / 1024,
+                self.config.adaptive.max_chunk_size / 1024 / 1024
+            );
+            (self.config.adaptive.initial_chunk_size, Vec::with_capacity(5))
+        } else {
+            (self.config.chunk_size, Vec::new())
+        };
+
         // Upload in chunks
-        let mut buffer = vec![0u8; self.config.chunk_size];
-        let mut chunk_num = offset / self.config.chunk_size as u64;
+        let mut buffer = vec![0u8; current_chunk_size];
+        let mut chunk_num = offset / current_chunk_size as u64;
+        let mut last_percent = if file_size > 0 {
+            (offset * 100) / file_size
+        } else {
+            100
+        };
 
         loop {
+            // Reallocate buffer if chunk size changed (adaptive mode)
+            if current_chunk_size != buffer.len() {
+                buffer = vec![0u8; current_chunk_size];
+            }
+
             // Read chunk
             let n = Self::read_chunk(&mut file, &mut buffer).await?;
 
@@ -184,18 +207,39 @@ impl UploadManager {
                 );
             }
             if self.config.verbose
-                && n < self.config.chunk_size
+                && n < current_chunk_size
                 && offset + (n as u64) < file_size
             {
                 tracing::debug!(
                     "Short read before EOF: {} bytes (expected {} bytes)",
                     n,
-                    self.config.chunk_size
+                    current_chunk_size
                 );
             }
 
-            // Upload chunk with retry logic
-            let new_offset = self
+            // Save state BEFORE uploading the chunk for crash recovery
+            let state = UploadState {
+                id: state_id.clone(),
+                file_path: file_path_buf.clone(),
+                upload_url: upload_url.clone(),
+                file_size,
+                offset,
+                chunk_size: current_chunk_size,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            };
+            if let Err(e) = self.storage.save_state(&state) {
+                tracing::warn!("Failed to save state before chunk: {}", e);
+            }
+
+            // Upload chunk with retry logic and timing (for adaptive sizing)
+            let start_time = if self.config.adaptive.enabled {
+                Some(Instant::now())
+            } else {
+                None
+            };
+
+            let new_offset = match self
                 .protocol
                 .upload_chunk_with_retry(
                     &upload_url,
@@ -203,12 +247,109 @@ impl UploadManager {
                     chunk,
                     self.config.max_retries,
                 )
-                .await?;
+                .await
+            {
+                Ok(new_offset) => new_offset,
+                Err(e) => {
+                    // Save state before returning error (best-effort)
+                    let error_state = UploadState {
+                        id: state_id.clone(),
+                        file_path: file_path_buf.clone(),
+                        upload_url: upload_url.clone(),
+                        file_size,
+                        offset,
+                        chunk_size: current_chunk_size,
+                        created_at: chrono::Utc::now(),
+                        updated_at: chrono::Utc::now(),
+                    };
+                    let _ = self.storage.save_state(&error_state);
+                    return Err(e);
+                }
+            };
+
+            let (bytes_sent, duration_secs) = if let Some(start) = start_time {
+                let duration = start.elapsed();
+                (n, duration.as_secs_f64())
+            } else {
+                (0, 0.0)
+            };
 
             if self.config.verbose {
                 tracing::debug!("Chunk #{} complete, new offset: {}", chunk_num, new_offset);
             }
             chunk_num += 1;
+
+            // Adaptive chunk sizing logic
+            if self.config.adaptive.enabled && duration_secs > 0.0 {
+                // Calculate throughput for this chunk
+                let throughput_mibps = (bytes_sent as f64 / 1024.0 / 1024.0) / duration_secs;
+
+                // Add to history (keep last 5)
+                throughput_history.push(throughput_mibps);
+                if throughput_history.len() > 5 {
+                    throughput_history.remove(0);
+                }
+
+                // Check if we should adapt (every adaptation_interval chunks)
+                if chunk_num % self.config.adaptive.adaptation_interval as u64 == 0
+                    && throughput_history.len() >= 2 {
+
+                    let avg_throughput: f64 = throughput_history.iter().sum::<f64>() / throughput_history.len() as f64;
+
+                    // Calculate variance from average
+                    let variance: f64 = throughput_history.iter()
+                        .map(|&t| (t - avg_throughput).abs() / avg_throughput)
+                        .sum::<f64>() / throughput_history.len() as f64;
+
+                    let old_chunk_size = current_chunk_size;
+
+                    // Adapt chunk size based on throughput trend
+                    if variance > self.config.adaptive.stability_threshold {
+                        // Unstable - check trend
+                        let first_half_avg: f64 = throughput_history.iter()
+                            .take(throughput_history.len() / 2)
+                            .sum::<f64>() / (throughput_history.len() / 2) as f64;
+                        let second_half_avg: f64 = throughput_history.iter()
+                            .skip(throughput_history.len() / 2)
+                            .sum::<f64>() / (throughput_history.len() - throughput_history.len() / 2) as f64;
+
+                        let throughput_change = (second_half_avg - first_half_avg) / first_half_avg;
+
+                        if throughput_change > self.config.adaptive.stability_threshold {
+                            // Throughput increasing - double chunk size
+                            current_chunk_size = (current_chunk_size * 2)
+                                .min(self.config.adaptive.max_chunk_size);
+                            if current_chunk_size != old_chunk_size {
+                                tracing::info!(
+                                    "Adaptive: Chunk size {} MB → {} MB (throughput: {:.1} MiB/s, increasing)",
+                                    old_chunk_size / 1024 / 1024,
+                                    current_chunk_size / 1024 / 1024,
+                                    avg_throughput
+                                );
+                            }
+                        } else if throughput_change < -self.config.adaptive.stability_threshold {
+                            // Throughput decreasing - halve chunk size
+                            current_chunk_size = (current_chunk_size / 2)
+                                .max(self.config.adaptive.min_chunk_size);
+                            if current_chunk_size != old_chunk_size {
+                                tracing::info!(
+                                    "Adaptive: Chunk size {} MB → {} MB (throughput: {:.1} MiB/s, decreasing)",
+                                    old_chunk_size / 1024 / 1024,
+                                    current_chunk_size / 1024 / 1024,
+                                    avg_throughput
+                                );
+                            }
+                        }
+                    } else {
+                        // Stable throughput - maintain current size
+                        tracing::info!(
+                            "Adaptive: Chunk size stable at {} MB (throughput: {:.1} MiB/s)",
+                            current_chunk_size / 1024 / 1024,
+                            avg_throughput
+                        );
+                    }
+                }
+            }
 
             // Validate offset
             if new_offset != offset + n as u64 {
@@ -236,7 +377,7 @@ impl UploadManager {
                     upload_url: upload_url.clone(),
                     file_size,
                     offset,
-                    chunk_size: self.config.chunk_size,
+                    chunk_size: current_chunk_size,
                     created_at: chrono::Utc::now(),
                     updated_at: chrono::Utc::now(),
                 };
@@ -247,6 +388,18 @@ impl UploadManager {
 
             offset = new_offset;
             progress.set_position(offset);
+            if file_size > 0 {
+                let percent = (offset * 100) / file_size;
+                if percent > last_percent {
+                    last_percent = percent;
+                    tracing::info!(
+                        "Progress: {}% ({} / {} bytes)",
+                        percent,
+                        offset,
+                        file_size
+                    );
+                }
+            }
 
             // Update state
             let state = UploadState {
@@ -255,7 +408,7 @@ impl UploadManager {
                 upload_url: upload_url.clone(),
                 file_size,
                 offset,
-                chunk_size: self.config.chunk_size,
+                chunk_size: current_chunk_size,
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
             };

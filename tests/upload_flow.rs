@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 use ztus::client::TusClient;
-use ztus::config::ConfigBuilder;
+use ztus::config::UploadConfig;
 use ztus::protocol::{TusExtension, TusProtocol, ServerCapabilities};
 use ztus::storage::{StateStorage, UploadState};
 
@@ -76,7 +76,7 @@ fn test_protocol_client_creation() {
 
 #[test]
 fn test_upload_config_validation() {
-    let config = ConfigBuilder::new().with_defaults().build().unwrap();
+    let config = UploadConfig::new();
     assert!(config.validate().is_ok());
 
     // Test invalid chunk size
