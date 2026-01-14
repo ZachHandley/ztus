@@ -1,0 +1,51 @@
+[package]
+name = "ztus"
+version = "0.1.0"
+edition = "2021"
+authors = ["Zach Handley <zachhandley@gmail.com>"]
+license = "MIT OR Apache-2.0"
+description = "A blazingly fast Rust CLI tool for resumable uploads using the TUS protocol and chunked downloads"
+repository = "https://github.com/zachhandley/ztus"
+readme = "README.md"
+keywords = ["tus", "upload", "resumable", "cli", "download"]
+categories = ["command-line-utilities", "network-programming"]
+rust-version = "1.70"
+
+[[bin]]
+name = "ztus"
+path = "src/main.rs"
+
+[lib]
+name = "ztus"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = "1.0.100"
+base64 = "0.22.1"
+chrono = { version = "0.4.42", features = ["serde"] }
+clap = { version = "4.5.54", features = ["derive"] }
+dirs = "6.0.0"
+futures-util = "0.3.31"
+indicatif = "0.18.3"
+reqwest = { version = "0.13.1", features = ["json", "stream"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+toml = "0.8"
+sha1 = "0.10.6"
+sha2 = "0.10.9"
+thiserror = "2.0.17"
+tokio = { version = "1.49.0", features = ["full"] }
+tracing = "0.1.44"
+tracing-subscriber = "0.3.22"
+url = "2.5"
+
+[dev-dependencies]
+tempfile = "3.15"
+tokio-test = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
