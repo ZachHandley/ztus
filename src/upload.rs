@@ -21,6 +21,21 @@ pub struct UploadManager {
 }
 
 impl UploadManager {
+    async fn read_chunk(file: &mut File, buffer: &mut [u8]) -> Result<usize> {
+        let mut filled = 0;
+        while filled < buffer.len() {
+            let n = file
+                .read(&mut buffer[filled..])
+                .await
+                .map_err(ZtusError::from)?;
+            if n == 0 {
+                break;
+            }
+            filled += n;
+        }
+        Ok(filled)
+    }
+
     /// Create a new upload manager
     pub fn new(base_url: String, config: UploadConfig, state_dir: PathBuf) -> Result<Self> {
         let headers = config.headers.clone();
@@ -66,8 +81,27 @@ impl UploadManager {
             .into_iter()
             .find(|s| s.file_path == file_path_buf);
 
+        let existing_state = if !self.config.resume {
+            if let Some(state) = existing_state {
+                tracing::info!("Resume disabled; deleting existing state and starting new upload");
+                self.storage.delete_state(&state.id)?;
+            }
+            None
+        } else {
+            existing_state
+        };
+
         let (upload_url, mut offset, state_id) = match existing_state {
             Some(state) => {
+                if state.chunk_size != self.config.chunk_size {
+                    tracing::info!(
+                        "Chunk size changed (state: {}, config: {}); starting new upload",
+                        state.chunk_size,
+                        self.config.chunk_size
+                    );
+                    self.storage.delete_state(&state.id)?;
+                    self.start_new_upload(&file_path_buf, file_size).await?
+                } else {
                 // Verify file hasn't changed
                 if state.file_size != file_size {
                     tracing::warn!("File size changed, starting new upload");
@@ -96,6 +130,7 @@ impl UploadManager {
                             return Err(e);
                         }
                     }
+                }
                 }
             }
             None => self.start_new_upload(&file_path_buf, file_size).await?,
@@ -131,7 +166,7 @@ impl UploadManager {
 
         loop {
             // Read chunk
-            let n = file.read(&mut buffer).await.map_err(ZtusError::from)?;
+            let n = Self::read_chunk(&mut file, &mut buffer).await?;
 
             if n == 0 {
                 break; // EOF
@@ -146,6 +181,13 @@ impl UploadManager {
                     chunk_num,
                     n,
                     offset
+                );
+            }
+            if self.config.verbose && n < self.config.chunk_size && offset + n as u64 < file_size {
+                tracing::debug!(
+                    "Short read before EOF: {} bytes (expected {} bytes)",
+                    n,
+                    self.config.chunk_size
                 );
             }
 

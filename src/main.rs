@@ -58,6 +58,10 @@ enum Commands {
         #[arg(short, long)]
         chunk_size: Option<usize>,
 
+        /// Disable resumable uploads (start fresh even if state exists)
+        #[arg(long)]
+        no_resume: bool,
+
         /// Maximum number of retry attempts (default: 3)
         #[arg(short, long)]
         max_retries: Option<usize>,
@@ -170,8 +174,8 @@ enum ConfigCommands {
 /// - "key:value" - single key-value pair
 ///
 /// Returns a HashMap of key-value pairs
-fn parse_metadata(metadata_args: &[String]) -> Result<HashMap<String, String>> {
-    let mut metadata = HashMap::new();
+fn parse_metadata(metadata_args: &[String]) -> Result<Vec<(String, String)>> {
+    let mut metadata = Vec::new();
 
     for arg in metadata_args {
         // Try to parse as "key:value" format
@@ -186,7 +190,7 @@ fn parse_metadata(metadata_args: &[String]) -> Result<HashMap<String, String>> {
                     format!("Metadata value for key '{}' cannot be empty", key)
                 ));
             }
-            metadata.insert(key.to_string(), value.to_string());
+            metadata.push((key.to_string(), value.to_string()));
         } else {
             // If no colon found, treat the entire string as a key with empty value
             // This is an error condition
@@ -197,6 +201,49 @@ fn parse_metadata(metadata_args: &[String]) -> Result<HashMap<String, String>> {
     }
 
     Ok(metadata)
+}
+
+fn merge_kv_case_sensitive(
+    base: Vec<(String, String)>,
+    overrides: Vec<(String, String)>,
+) -> Vec<(String, String)> {
+    merge_kv(base, overrides, |key| key.to_string())
+}
+
+fn merge_headers(base: Vec<(String, String)>, overrides: Vec<(String, String)>) -> Vec<(String, String)> {
+    merge_kv(base, overrides, |key| key.to_ascii_lowercase())
+}
+
+fn merge_kv<F>(
+    base: Vec<(String, String)>,
+    overrides: Vec<(String, String)>,
+    normalize_key: F,
+) -> Vec<(String, String)>
+where
+    F: Fn(&str) -> String,
+{
+    let mut merged = base;
+    let mut index = HashMap::new();
+
+    for (i, (key, _)) in merged.iter().enumerate() {
+        index.insert(normalize_key(key), i);
+    }
+
+    for (key, value) in overrides {
+        let normalized = normalize_key(&key);
+        if let Some(existing) = index.get(&normalized).copied() {
+            merged[existing] = (key, value);
+        } else {
+            index.insert(normalized, merged.len());
+            merged.push((key, value));
+        }
+    }
+
+    merged
+}
+
+fn metadata_has_key(metadata: &[(String, String)], key: &str) -> bool {
+    metadata.iter().any(|(k, _)| k == key)
 }
 
 /// Parse custom headers from command line arguments
@@ -261,6 +308,7 @@ async fn main() -> Result<()> {
             file,
             url,
             chunk_size,
+            no_resume,
             max_retries,
             verbose,
             checksum,
@@ -278,12 +326,16 @@ async fn main() -> Result<()> {
                 config.chunk_size = size;
             }
 
+            if no_resume {
+                config.resume = false;
+            }
+
             if let Some(retries) = max_retries {
                 config.max_retries = retries;
             }
 
-            // Set verbose flag
-            config.verbose = verbose;
+            // Set verbose flag (accept global or command-level)
+            config.verbose = verbose || cli.verbose;
 
             // Handle checksum configuration
             if no_checksum {
@@ -305,30 +357,33 @@ async fn main() -> Result<()> {
             }
 
             // Parse and set metadata
-            let mut parsed_metadata = if !metadata.is_empty() {
+            let parsed_metadata = if !metadata.is_empty() {
                 parse_metadata(&metadata)?
             } else {
-                HashMap::new()
+                Vec::new()
             };
 
+            let mut merged_metadata = merge_kv_case_sensitive(config.metadata.clone(), parsed_metadata);
+
             // Auto-add filename from file path if not provided
-            if !parsed_metadata.contains_key("filename") {
+            if !metadata_has_key(&merged_metadata, "filename") {
                 if let Some(filename) = file_path.file_name().and_then(|n| n.to_str()) {
-                    parsed_metadata.insert("filename".to_string(), filename.to_string());
+                    merged_metadata.push(("filename".to_string(), filename.to_string()));
                     tracing::debug!("Auto-added filename metadata: {}", filename);
                 }
             }
 
-            if !parsed_metadata.is_empty() {
-                tracing::debug!("Parsed metadata: {:?}", parsed_metadata);
-                config.metadata = parsed_metadata.into_iter().collect();
+            if !merged_metadata.is_empty() {
+                tracing::debug!("Parsed metadata: {:?}", merged_metadata);
+                config.metadata = merged_metadata;
             }
 
             // Parse and set custom headers
             if !header.is_empty() {
                 let parsed_headers = parse_headers(&header)?;
-                tracing::debug!("Parsed headers: {:?}", parsed_headers);
-                config.headers = parsed_headers;
+                let merged_headers = merge_headers(config.headers.clone(), parsed_headers);
+                tracing::debug!("Parsed headers: {:?}", merged_headers);
+                config.headers = merged_headers;
             }
 
             // Validate config
@@ -541,7 +596,7 @@ mod tests {
         let metadata = vec!["filename:test.txt".to_string()];
         let result = parse_metadata(&metadata).unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result.get("filename").unwrap(), "test.txt");
+        assert_eq!(result[0], ("filename".to_string(), "test.txt".to_string()));
     }
 
     #[test]
@@ -553,9 +608,9 @@ mod tests {
         ];
         let result = parse_metadata(&metadata).unwrap();
         assert_eq!(result.len(), 3);
-        assert_eq!(result.get("filename").unwrap(), "test.txt");
-        assert_eq!(result.get("type").unwrap(), "document");
-        assert_eq!(result.get("author").unwrap(), "John Doe");
+        assert_eq!(result[0], ("filename".to_string(), "test.txt".to_string()));
+        assert_eq!(result[1], ("type".to_string(), "document".to_string()));
+        assert_eq!(result[2], ("author".to_string(), "John Doe".to_string()));
     }
 
     #[test]
@@ -564,7 +619,7 @@ mod tests {
         let result = parse_metadata(&metadata).unwrap();
         assert_eq!(result.len(), 1);
         // split_once only splits on the first colon, so value should be "10:30"
-        assert_eq!(result.get("time").unwrap(), "10:30");
+        assert_eq!(result[0], ("time".to_string(), "10:30".to_string()));
     }
 
     #[test]
@@ -607,9 +662,9 @@ mod tests {
         ];
         let result = parse_metadata(&metadata).unwrap();
         assert_eq!(result.len(), 3);
-        assert_eq!(result.get("filename").unwrap(), "test file.txt");
-        assert_eq!(result.get("path").unwrap(), "/path/to/file");
-        assert_eq!(result.get("url").unwrap(), "https://example.com");
+        assert_eq!(result[0], ("filename".to_string(), "test file.txt".to_string()));
+        assert_eq!(result[1], ("path".to_string(), "/path/to/file".to_string()));
+        assert_eq!(result[2], ("url".to_string(), "https://example.com".to_string()));
     }
 
     #[test]

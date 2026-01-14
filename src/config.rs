@@ -29,6 +29,10 @@ pub struct UploadConfig {
     /// Request timeout in seconds
     pub timeout: u64,
 
+    /// Whether to resume existing uploads when state is found
+    #[serde(default = "default_resume")]
+    pub resume: bool,
+
     /// Verbose output - show detailed upload progress
     #[serde(default)]
     pub verbose: bool,
@@ -70,6 +74,7 @@ impl Default for UploadConfig {
             tus_version: DEFAULT_TUS_VERSION.to_string(),
             max_retries: 3,
             timeout: 30,
+            resume: true,
             verbose: false,
             headers: Vec::new(),
             metadata: Vec::new(),
@@ -77,6 +82,10 @@ impl Default for UploadConfig {
             checksum_algorithm: ChecksumAlgorithm::Sha256,
         }
     }
+}
+
+fn default_resume() -> bool {
+    true
 }
 
 impl UploadConfig {
