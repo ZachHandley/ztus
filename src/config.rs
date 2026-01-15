@@ -29,6 +29,9 @@ pub const DEFAULT_ADAPTATION_INTERVAL: usize = 5;
 /// Default stability threshold for adaptive uploads (10%)
 pub const DEFAULT_STABILITY_THRESHOLD: f64 = 0.1;
 
+/// Default state save interval (save every X percent of progress)
+pub const DEFAULT_STATE_SAVE_INTERVAL: usize = 5;  // Save every 5% of file progress
+
 /// Configuration for adaptive chunk sizing during uploads
 ///
 /// Adaptive chunk sizing allows the uploader to dynamically adjust chunk sizes
@@ -138,6 +141,12 @@ pub struct UploadConfig {
     /// Adaptive chunk sizing configuration
     #[serde(default)]
     pub adaptive: AdaptiveChunkConfig,
+
+    /// State save interval - save state every X percent of upload progress (default: 5)
+    /// Lower values = more frequent saves = better crash recovery but more I/O overhead
+    /// Recommended: 1-5 percent (1% = 100 saves for a file, 5% = 20 saves for a file)
+    #[serde(default = "default_state_save_interval")]
+    pub state_save_interval: usize,
 }
 
 /// Checksum algorithm options
@@ -171,12 +180,17 @@ impl Default for UploadConfig {
             verify_checksum: true,
             checksum_algorithm: ChecksumAlgorithm::Sha256,
             adaptive: AdaptiveChunkConfig::default(),
+            state_save_interval: DEFAULT_STATE_SAVE_INTERVAL,
         }
     }
 }
 
 fn default_resume() -> bool {
     true
+}
+
+fn default_state_save_interval() -> usize {
+    DEFAULT_STATE_SAVE_INTERVAL
 }
 
 impl UploadConfig {
@@ -268,7 +282,7 @@ impl AppConfig {
     /// Load configuration from default location
     ///
     /// Returns default configuration if the config file doesn't exist.
-    /// Merges partial configs with defaults.
+    /// Merges partial configs with defaults for backward compatibility.
     pub fn load() -> Result<Self> {
         let config_path = Self::config_path();
 
@@ -283,12 +297,47 @@ impl AppConfig {
             ZtusError::ConfigError(format!("Failed to read config file {}: {}", config_path.display(), e))
         })?;
 
-        let mut config: AppConfig = toml::from_str(&contents).map_err(|e| {
-            ZtusError::ConfigError(format!("Failed to parse config file {}: {}", config_path.display(), e))
-        })?;
+        // Parse the config file; replace invalid config with defaults
+        let config: AppConfig = match toml::from_str(&contents) {
+            Ok(config) => config,
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to parse config file {}, replacing with defaults: {}",
+                    config_path.display(),
+                    e
+                );
+                let default_config = Self::default();
+                if let Err(save_err) = default_config.save() {
+                    return Err(ZtusError::ConfigError(format!(
+                        "Failed to replace invalid config file {}: {}",
+                        config_path.display(),
+                        save_err
+                    )));
+                }
+                return Ok(default_config);
+            }
+        };
 
         // Ensure state_dir is set correctly (override from config file if needed)
+        let mut config = config;
         config.state_dir = Self::default().state_dir;
+
+        if let Err(e) = config.upload.validate() {
+            tracing::warn!(
+                "Invalid config file {}, replacing with defaults: {}",
+                config_path.display(),
+                e
+            );
+            let default_config = Self::default();
+            if let Err(save_err) = default_config.save() {
+                return Err(ZtusError::ConfigError(format!(
+                    "Failed to replace invalid config file {}: {}",
+                    config_path.display(),
+                    save_err
+                )));
+            }
+            return Ok(default_config);
+        }
 
         Ok(config)
     }

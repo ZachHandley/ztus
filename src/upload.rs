@@ -93,15 +93,6 @@ impl UploadManager {
 
         let (upload_url, mut offset, state_id) = match existing_state {
             Some(state) => {
-                if state.chunk_size != self.config.chunk_size {
-                    tracing::info!(
-                        "Chunk size changed (state: {}, config: {}); starting new upload",
-                        state.chunk_size,
-                        self.config.chunk_size
-                    );
-                    self.storage.delete_state(&state.id)?;
-                    self.start_new_upload(&file_path_buf, file_size).await?
-                } else {
                 // Verify file hasn't changed
                 if state.file_size != file_size {
                     tracing::info!("File size differs from saved state, starting new upload");
@@ -130,7 +121,6 @@ impl UploadManager {
                             return Err(e);
                         }
                     }
-                }
                 }
             }
             None => self.start_new_upload(&file_path_buf, file_size).await?,
@@ -181,6 +171,7 @@ impl UploadManager {
         } else {
             100
         };
+        let mut last_saved_percent = last_percent;  // Track last saved percentage for state saves
 
         loop {
             // Reallocate buffer if chunk size changed (adaptive mode)
@@ -217,19 +208,38 @@ impl UploadManager {
                 );
             }
 
-            // Save state BEFORE uploading the chunk for crash recovery
-            let state = UploadState {
-                id: state_id.clone(),
-                file_path: file_path_buf.clone(),
-                upload_url: upload_url.clone(),
-                file_size,
-                offset,
-                chunk_size: current_chunk_size,
-                created_at: chrono::Utc::now(),
-                updated_at: chrono::Utc::now(),
+            // Calculate current percentage before uploading
+            let current_percent = if file_size > 0 {
+                (offset * 100) / file_size
+            } else {
+                100
             };
-            if let Err(e) = self.storage.save_state(&state) {
-                tracing::warn!("Failed to save state before chunk: {}", e);
+
+            // Save state before uploading, but only at percentage intervals to avoid blocking
+            // Save on: first upload (0%), at configured intervals, and before completion
+            let should_save_state = offset == 0  // Always save initial state
+                || current_percent >= last_saved_percent + self.config.state_save_interval as u64  // Every X%
+                || offset + n as u64 == file_size;  // Always save before completion
+
+            if should_save_state {
+                let state = UploadState {
+                    id: state_id.clone(),
+                    file_path: file_path_buf.clone(),
+                    upload_url: upload_url.clone(),
+                    file_size,
+                    offset,
+                    created_at: chrono::Utc::now(),
+                    updated_at: chrono::Utc::now(),
+                };
+                match self.storage.save_state(&state) {
+                    Ok(()) => {
+                        last_saved_percent = current_percent;
+                        tracing::debug!("Saved state at {}% (offset: {})", current_percent, offset);
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to save state before chunk: {}", e);
+                    }
+                }
             }
 
             // Upload chunk with retry logic and timing (for adaptive sizing)
@@ -258,7 +268,6 @@ impl UploadManager {
                         upload_url: upload_url.clone(),
                         file_size,
                         offset,
-                        chunk_size: current_chunk_size,
                         created_at: chrono::Utc::now(),
                         updated_at: chrono::Utc::now(),
                     };
@@ -281,6 +290,7 @@ impl UploadManager {
 
             // Adaptive chunk sizing logic
             if self.config.adaptive.enabled && duration_secs > 0.0 {
+                const MIN_EXPLORATION_THROUGHPUT: f64 = 10.0;
                 // Calculate throughput for this chunk
                 let throughput_mibps = (bytes_sent as f64 / 1024.0 / 1024.0) / duration_secs;
 
@@ -341,12 +351,26 @@ impl UploadManager {
                             }
                         }
                     } else {
-                        // Stable throughput - maintain current size
-                        tracing::info!(
-                            "Adaptive: Chunk size stable at {} MB (throughput: {:.1} MiB/s)",
-                            current_chunk_size / 1024 / 1024,
-                            avg_throughput
-                        );
+                        // Stable throughput - but check if it's too slow
+                        if avg_throughput < MIN_EXPLORATION_THROUGHPUT && current_chunk_size < self.config.adaptive.max_chunk_size {
+                            // Stable but slow - proactively try larger chunk size
+                            let new_size = (current_chunk_size * 2).min(self.config.adaptive.max_chunk_size);
+                            tracing::info!(
+                                "Adaptive: Chunk size {} MB → {} MB (throughput: {:.1} MiB/s, stable but slow - exploring larger chunks)",
+                                current_chunk_size / 1024 / 1024,
+                                new_size / 1024 / 1024,
+                                avg_throughput
+                            );
+                            current_chunk_size = new_size;
+                        } else {
+                            // Stable and acceptable throughput - maintain current size
+                            tracing::debug!(
+                                "Adaptive: Chunk size stable at {} MB (throughput: {:.1} MiB/s, variance: {:.1}%)",
+                                current_chunk_size / 1024 / 1024,
+                                avg_throughput,
+                                variance * 100.0
+                            );
+                        }
                     }
                 }
             }
@@ -377,7 +401,6 @@ impl UploadManager {
                     upload_url: upload_url.clone(),
                     file_size,
                     offset,
-                    chunk_size: current_chunk_size,
                     created_at: chrono::Utc::now(),
                     updated_at: chrono::Utc::now(),
                 };
@@ -401,18 +424,34 @@ impl UploadManager {
                 }
             }
 
-            // Update state
-            let state = UploadState {
-                id: state_id.clone(),
-                file_path: file_path_buf.clone(),
-                upload_url: upload_url.clone(),
-                file_size,
-                offset,
-                chunk_size: current_chunk_size,
-                created_at: chrono::Utc::now(),
-                updated_at: chrono::Utc::now(),
+            // Calculate new percentage after upload
+            let new_percent = if file_size > 0 {
+                (offset * 100) / file_size
+            } else {
+                100
             };
-            self.storage.save_state(&state)?;
+
+            // Update state (but only at percentage intervals to reduce I/O)
+            if new_percent >= last_saved_percent + self.config.state_save_interval as u64
+                || offset == file_size {
+                let state = UploadState {
+                    id: state_id.clone(),
+                    file_path: file_path_buf.clone(),
+                    upload_url: upload_url.clone(),
+                    file_size,
+                    offset,
+                    created_at: chrono::Utc::now(),
+                    updated_at: chrono::Utc::now(),
+                };
+                match self.storage.save_state(&state) {
+                    Ok(()) => {
+                        last_saved_percent = new_percent;
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to save state after chunk: {}", e);
+                    }
+                }
+            }
         }
 
         progress.finish_with_message("Upload complete!");
@@ -501,15 +540,63 @@ impl UploadManager {
             (None, None)
         };
 
-        let upload_url = self
+        // Try to create upload, with fallback for unsupported checksum algorithms
+        let upload_url = match self
             .protocol
             .create_upload(
                 file_size,
                 Some(self.config.metadata.clone()),
                 checksum_algo,
-                checksum_value,
+                checksum_value.clone(),
             )
-            .await?;
+            .await
+        {
+            Ok(url) => url,
+            Err(ZtusError::ProtocolError(ref error_msg))
+                if checksum_algo.is_some() &&
+                   (error_msg.contains("unsupported checksum algorithm") ||
+                    error_msg.contains("Unsupported checksum algorithm") ||
+                    error_msg.contains("checksum algorithm") ||
+                    error_msg.contains("checksum not supported")) =>
+            {
+                // Server doesn't support the configured checksum algorithm
+                if checksum_algo == Some(crate::config::ChecksumAlgorithm::Sha1) {
+                    // Try SHA256 as fallback
+                    tracing::warn!(
+                        "Server does not support SHA1 checksums, falling back to SHA256"
+                    );
+                    let sha256_checksum = calculate_file_checksum(file_path, crate::config::ChecksumAlgorithm::Sha256)?;
+                    tracing::info!(
+                        "Calculated sha256 checksum: {}",
+                        sha256_checksum
+                    );
+
+                    self.protocol
+                        .create_upload(
+                            file_size,
+                            Some(self.config.metadata.clone()),
+                            Some(crate::config::ChecksumAlgorithm::Sha256),
+                            Some(sha256_checksum),
+                        )
+                        .await?
+                } else {
+                    // Try without checksum verification as last resort
+                    tracing::warn!(
+                        "Server does not support the requested checksum algorithm, \
+                         retrying without checksum verification"
+                    );
+                    self.protocol
+                        .create_upload(
+                            file_size,
+                            Some(self.config.metadata.clone()),
+                            None,
+                            None,
+                        )
+                        .await?
+                }
+            }
+            Err(e) => return Err(e),
+        };
 
         tracing::info!("Created upload at: {}", upload_url);
 
@@ -518,7 +605,6 @@ impl UploadManager {
             file_path.to_path_buf(),
             upload_url.clone(),
             file_size,
-            self.config.chunk_size,
         );
 
         let state_id = state.id.clone();

@@ -303,13 +303,23 @@ impl TusProtocol {
     pub fn new(base_url: String, timeout: Duration) -> Result<Self> {
         let client = Client::builder()
             .timeout(timeout)
-            .http2_prior_knowledge()           // Force HTTP/2
-            .pool_max_idle_per_host(1)         // Keep 1 connection alive
-            .pool_idle_timeout(Duration::from_secs(90))  // Longer keep-alive
-            .http2_keep_alive_interval(Duration::from_secs(30))  // Keep-alive pings
+            // HTTP/2 configuration
+            .http2_prior_knowledge()
+            .http2_keep_alive_interval(Duration::from_secs(30))
             .http2_keep_alive_timeout(Duration::from_secs(10))
+            .http2_adaptive_window(true)  // Auto-adjust flow control window
+            // Connection pool - INCREASED for HTTP/2 multiplexing
+            .pool_max_idle_per_host(10)   // Was 1, now 10 for better concurrency
+            .pool_idle_timeout(Duration::from_secs(90))
+            // TCP optimizations
+            .tcp_nodelay(true)  // Disable Nagle's algorithm - CRITICAL for upload speed
+            .tcp_keepalive(Duration::from_secs(60))  // Detect dead connections
+            // Connection limits
+            .connect_timeout(Duration::from_secs(10))
             .build()
             .map_err(ZtusError::from)?;
+
+        tracing::debug!("Created HTTP/2 client with TCP_NODELAY and pool_max_idle_per_host=10");
 
         Ok(Self {
             client,
@@ -322,13 +332,19 @@ impl TusProtocol {
     pub fn with_headers(base_url: String, timeout: Duration, headers: Vec<(String, String)>) -> Result<Self> {
         let client = Client::builder()
             .timeout(timeout)
-            .http2_prior_knowledge()           // Force HTTP/2
-            .pool_max_idle_per_host(1)         // Keep 1 connection alive
-            .pool_idle_timeout(Duration::from_secs(90))  // Longer keep-alive
-            .http2_keep_alive_interval(Duration::from_secs(30))  // Keep-alive pings
+            .http2_prior_knowledge()
+            .http2_keep_alive_interval(Duration::from_secs(30))
             .http2_keep_alive_timeout(Duration::from_secs(10))
+            .http2_adaptive_window(true)
+            .pool_max_idle_per_host(10)  // Was 1
+            .pool_idle_timeout(Duration::from_secs(90))
+            .tcp_nodelay(true)
+            .tcp_keepalive(Duration::from_secs(60))
+            .connect_timeout(Duration::from_secs(10))
             .build()
             .map_err(ZtusError::from)?;
+
+        tracing::debug!("Created HTTP/2 client with custom headers and TCP optimizations");
 
         Ok(Self {
             client,

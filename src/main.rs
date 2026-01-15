@@ -63,7 +63,7 @@ enum Commands {
         adaptive_chunk_size: bool,
 
         /// Disable adaptive chunk sizing
-        #[arg(long, action = clap::ArgAction::SetFalse, name = "no-adaptive-chunk-size")]
+        #[arg(long, action = clap::ArgAction::SetFalse, name = "no-adaptive-chunk-size", alias = "disable-adaptive")]
         no_adaptive_chunk_size: bool,
 
         /// Maximum chunk size in bytes for adaptive mode (default: 200MB)
@@ -372,6 +372,18 @@ async fn main() -> Result<()> {
                 config.adaptive.min_chunk_size = size;
                 tracing::debug!("Adaptive min chunk size set to {} bytes", size);
             }
+
+            // Log adaptive mode status for debugging
+            tracing::debug!("Adaptive chunk sizing: {}", config.adaptive.enabled);
+            tracing::debug!(
+                "Config chunk size: {} MB, adaptive initial: {} MB",
+                config.chunk_size / 1024 / 1024,
+                if config.adaptive.enabled {
+                    config.adaptive.initial_chunk_size / 1024 / 1024
+                } else {
+                    config.chunk_size / 1024 / 1024
+                }
+            );
 
             if no_resume {
                 config.resume = false;

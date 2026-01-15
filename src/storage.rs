@@ -24,9 +24,6 @@ pub struct UploadState {
     /// Current upload offset
     pub offset: u64,
 
-    /// Upload configuration
-    pub chunk_size: usize,
-
     /// Timestamp when upload was created
     pub created_at: chrono::DateTime<chrono::Utc>,
 
@@ -36,7 +33,7 @@ pub struct UploadState {
 
 impl UploadState {
     /// Create a new upload state
-    pub fn new(file_path: PathBuf, upload_url: String, file_size: u64, chunk_size: usize) -> Self {
+    pub fn new(file_path: PathBuf, upload_url: String, file_size: u64) -> Self {
         let now = chrono::Utc::now();
         let id = Self::generate_id(&file_path, &upload_url);
 
@@ -46,7 +43,6 @@ impl UploadState {
             upload_url,
             file_size,
             offset: 0,
-            chunk_size,
             created_at: now,
             updated_at: now,
         }
