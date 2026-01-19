@@ -2,12 +2,14 @@
 //!
 //! This is the main entry point for the ztus command-line interface.
 
+mod batch;
 mod checksum;
 mod client;
 mod config;
 mod download;
 mod error;
 mod protocol;
+mod server;
 mod storage;
 mod upload;
 
@@ -158,6 +160,23 @@ enum Commands {
         #[command(subcommand)]
         action: ConfigCommands,
     },
+
+    /// Run the ztus API server
+    Server {
+        /// Host to bind to
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+
+        /// Port to bind to
+        #[arg(short, long, default_value = "8080")]
+        port: u16,
+    },
+
+    /// Batch upload multiple files
+    Batch {
+        #[command(subcommand)]
+        command: BatchCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -182,6 +201,46 @@ enum ConfigCommands {
 
     /// Open configuration file in editor
     Edit,
+}
+
+#[derive(Subcommand)]
+enum BatchCommands {
+    /// Create and upload a batch of files
+    Upload {
+        /// Files to upload
+        #[arg(required = true)]
+        files: Vec<std::path::PathBuf>,
+
+        /// Base URL of the upload server
+        #[arg(short, long)]
+        url: String,
+
+        /// Custom HTTP headers in key:value format (can be used multiple times)
+        #[arg(short = 'H', long = "header")]
+        headers: Vec<String>,
+
+        /// Chunk size in MB
+        #[arg(long, default_value = "5")]
+        chunk_size: usize,
+
+        /// Enable adaptive chunk sizing
+        #[arg(long)]
+        adaptive: bool,
+    },
+
+    /// Check batch status
+    Status {
+        /// Batch ID to check
+        batch_id: String,
+
+        /// Base URL of the upload server
+        #[arg(short, long)]
+        url: String,
+
+        /// Custom HTTP headers in key:value format (can be used multiple times)
+        #[arg(short = 'H', long = "header")]
+        headers: Vec<String>,
+    },
 }
 
 /// Parse metadata from command line arguments
@@ -549,6 +608,11 @@ async fn main() -> Result<()> {
             println!("Upload terminated successfully");
         }
 
+        Commands::Server { host, port } => {
+            tracing::info!("Starting ztus API server on {}:{}", host, port);
+            server::run_server(server::ServerConfig { host, port }).await?;
+        }
+
         Commands::Config { action } => match action {
             ConfigCommands::Get { key } => {
                 let config = AppConfig::load()?;
@@ -639,6 +703,65 @@ async fn main() -> Result<()> {
                         std::process::exit(1);
                     }
                 }
+            }
+        },
+
+        Commands::Batch { command } => match command {
+            BatchCommands::Upload {
+                files,
+                url,
+                headers,
+                chunk_size,
+                adaptive,
+            } => {
+                // Parse headers
+                let parsed_headers = parse_headers(&headers)?;
+
+                // Set up upload config
+                let mut config = client.upload_config().clone();
+                config.chunk_size = chunk_size * 1024 * 1024;
+                config.adaptive.enabled = adaptive;
+                config.headers = parsed_headers.clone();
+
+                println!("Creating batch with {} files...", files.len());
+
+                // Execute batch upload
+                let result = batch::execute_batch_upload(&url, files, &config, parsed_headers).await?;
+
+                println!("Batch ID: {}", result.batch.batch_id);
+                println!(
+                    "Uploaded: {}/{} files",
+                    result.successful,
+                    result.successful + result.failed
+                );
+
+                if result.failed > 0 {
+                    eprintln!("\nFailed uploads:");
+                    for (filename, error) in &result.errors {
+                        eprintln!("  - {}: {}", filename, error);
+                    }
+                    std::process::exit(1);
+                } else {
+                    println!("All files uploaded successfully!");
+                }
+            }
+
+            BatchCommands::Status {
+                batch_id,
+                url,
+                headers,
+            } => {
+                // Parse headers
+                let parsed_headers = parse_headers(&headers)?;
+
+                // Create batch client
+                let batch_client = batch::BatchClient::with_headers(
+                    std::time::Duration::from_secs(client.upload_config().timeout),
+                    parsed_headers,
+                )?;
+
+                let status = batch_client.get_batch_status(&url, &batch_id).await?;
+                println!("{}", status);
             }
         },
     }

@@ -14,12 +14,11 @@ fn test_state_storage() {
 
     let storage = StateStorage::new(temp_dir.clone()).unwrap();
 
-    // Create a test state
+    // Create a test state (UploadState::new takes file_path, upload_url, file_size)
     let state = UploadState::new(
         PathBuf::from("/tmp/test.txt"),
         "http://example.com/upload/123".to_string(),
         1024,
-        512,
     );
 
     // Save state
@@ -29,7 +28,6 @@ fn test_state_storage() {
     let loaded = storage.load_state(&state.id).unwrap();
     assert_eq!(loaded.id, state.id);
     assert_eq!(loaded.file_size, state.file_size);
-    assert_eq!(loaded.chunk_size, state.chunk_size);
 
     // List states
     let states = storage.list_states().unwrap();
@@ -50,7 +48,6 @@ fn test_upload_state_progress() {
         PathBuf::from("/tmp/test.txt"),
         "http://example.com/upload/123".to_string(),
         1024,
-        512,
     );
 
     assert_eq!(state.progress(), 0.0);
