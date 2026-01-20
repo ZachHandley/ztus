@@ -49,16 +49,20 @@ impl TusExtension {
             Self::Concatenation => "concatenation",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Option<Self> {
+impl std::str::FromStr for TusExtension {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s {
-            "creation" => Some(Self::Creation),
-            "creation-with-upload" => Some(Self::CreationWithUpload),
-            "termination" => Some(Self::Termination),
-            "checksum" => Some(Self::Checksum),
-            "expiration" => Some(Self::Expiration),
-            "concatenation" => Some(Self::Concatenation),
-            _ => None,
+            "creation" => Ok(Self::Creation),
+            "creation-with-upload" => Ok(Self::CreationWithUpload),
+            "termination" => Ok(Self::Termination),
+            "checksum" => Ok(Self::Checksum),
+            "expiration" => Ok(Self::Expiration),
+            "concatenation" => Ok(Self::Concatenation),
+            _ => Err(format!("Unknown TUS extension: {}", s)),
         }
     }
 }
@@ -225,7 +229,7 @@ pub async fn get_upload_info(upload_url: &str) -> Result<UploadInfo> {
                 .headers()
                 .get(UPLOAD_METADATA)
                 .and_then(|v| v.to_str().ok())
-                .map(|header| decode_metadata(header))
+                .map(decode_metadata)
                 .transpose()?
                 .unwrap_or_default();
 
@@ -398,7 +402,7 @@ impl TusProtocol {
             .and_then(|v| v.to_str().ok())
             .map(|ext| {
                 ext.split(',')
-                    .filter_map(|s| TusExtension::from_str(s.trim()))
+                    .filter_map(|s| s.trim().parse().ok())
                     .collect()
             })
             .unwrap_or_default();
@@ -737,18 +741,18 @@ mod tests {
     #[test]
     fn test_tus_extension_from_str() {
         assert_eq!(
-            TusExtension::from_str("creation"),
-            Some(TusExtension::Creation)
+            "creation".parse::<TusExtension>(),
+            Ok(TusExtension::Creation)
         );
         assert_eq!(
-            TusExtension::from_str("checksum"),
-            Some(TusExtension::Checksum)
+            "checksum".parse::<TusExtension>(),
+            Ok(TusExtension::Checksum)
         );
         assert_eq!(
-            TusExtension::from_str("termination"),
-            Some(TusExtension::Termination)
+            "termination".parse::<TusExtension>(),
+            Ok(TusExtension::Termination)
         );
-        assert_eq!(TusExtension::from_str("invalid"), None);
+        assert!("invalid".parse::<TusExtension>().is_err());
     }
 
     #[test]

@@ -13,6 +13,8 @@ use pyo3::prelude::*;
 #[cfg(feature = "python")]
 use pyo3::types::PyAny;
 #[cfg(feature = "python")]
+use pyo3::Bound;
+#[cfg(feature = "python")]
 use std::path::PathBuf;
 #[cfg(feature = "python")]
 use std::sync::Arc;
@@ -144,7 +146,7 @@ impl PyTusClient {
         file_path: &str,
         upload_url: &str,
         progress_callback: Option<Py<PyAny>>,
-    ) -> PyResult<&'a PyAny> {
+    ) -> PyResult<Bound<'a, PyAny>> {
         let file_path = PathBuf::from(file_path);
         let upload_url = upload_url.to_string();
         let upload_config = self.inner.upload_config().clone();
@@ -156,7 +158,7 @@ impl PyTusClient {
             Arc::new(crate::progress::NoOpProgress) as Arc<dyn ProgressReporter>
         };
 
-        pyo3_asyncio::tokio::future_into_py(py, async move {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let manager = crate::upload::UploadManager::with_progress(
                 upload_url,
                 upload_config,
@@ -224,7 +226,7 @@ impl PyTusClient {
         file_path: &str,
         upload_url: &str,
         progress_callback: Option<Py<PyAny>>,
-    ) -> PyResult<&'a PyAny> {
+    ) -> PyResult<Bound<'a, PyAny>> {
         let file_path = PathBuf::from(file_path);
         let upload_url = upload_url.to_string();
         let upload_config = self.inner.upload_config().clone();
@@ -236,7 +238,7 @@ impl PyTusClient {
             Arc::new(crate::progress::NoOpProgress) as Arc<dyn ProgressReporter>
         };
 
-        pyo3_asyncio::tokio::future_into_py(py, async move {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let manager = crate::upload::UploadManager::with_progress(
                 upload_url,
                 upload_config,
@@ -285,7 +287,7 @@ impl PyTusClient {
             let manager = crate::download::DownloadManager::with_progress(chunk_size, progress).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
             manager
-                .download_file(&url, &output_path)
+                .download_file(url, &output_path)
                 .await
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
         })
@@ -300,7 +302,7 @@ impl PyTusClient {
         output_path: &str,
         chunk_size: Option<usize>,
         progress_callback: Option<Py<PyAny>>,
-    ) -> PyResult<&'a PyAny> {
+    ) -> PyResult<Bound<'a, PyAny>> {
         let url = url.to_string();
         let output_path = PathBuf::from(output_path);
         let chunk_size = chunk_size.unwrap_or(5 * 1024 * 1024);
@@ -311,7 +313,7 @@ impl PyTusClient {
             Arc::new(crate::progress::NoOpProgress) as Arc<dyn ProgressReporter>
         };
 
-        pyo3_asyncio::tokio::future_into_py(py, async move {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let manager = crate::download::DownloadManager::with_progress(
                 chunk_size,
                 arc_to_box(progress),
@@ -350,7 +352,7 @@ impl PyTusClient {
 
 #[cfg(feature = "python")]
 #[pymodule]
-fn ztus(_py: Python, m: &PyModule) -> PyResult<()> {
+fn ztus(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTusClient>()?;
     Ok(())
 }

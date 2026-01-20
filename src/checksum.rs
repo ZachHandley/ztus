@@ -10,7 +10,7 @@ use std::path::Path;
 /// Calculate checksum for a file
 pub fn calculate_file_checksum(path: &Path, algorithm: ChecksumAlgorithm) -> Result<String> {
     let mut file = std::fs::File::open(path)
-        .map_err(|e| ZtusError::IoError(e))?;
+        .map_err(ZtusError::IoError)?;
 
     match algorithm {
         ChecksumAlgorithm::Sha1 => {

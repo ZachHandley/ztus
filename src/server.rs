@@ -355,12 +355,12 @@ async fn server_info() -> Json<ServerInfoResponse> {
 async fn upload_handler(
     Json(payload): Json<UploadRequest>,
 ) -> Result<Json<UploadResponse>, ErrorResponse> {
-    let client = TusClient::new().map_err(|e| ErrorResponse::from(e))?;
+    let client = TusClient::new().map_err(ErrorResponse::from)?;
 
     let file_path = PathBuf::from(&payload.file_path);
     let config = if let Some(req_config) = payload.config {
         let upload_config: UploadConfig = req_config.into();
-        upload_config.validate().map_err(|e| ErrorResponse::from(e))?;
+        upload_config.validate().map_err(ErrorResponse::from)?;
         upload_config
     } else {
         client.upload_config().clone()
@@ -369,7 +369,7 @@ async fn upload_handler(
     client
         .upload_with_config(&file_path, &payload.upload_url, &config)
         .await
-        .map_err(|e| ErrorResponse::from(e))?;
+        .map_err(ErrorResponse::from)?;
 
     Ok(Json(UploadResponse {
         success: true,
@@ -381,7 +381,7 @@ async fn upload_handler(
 async fn download_handler(
     Json(payload): Json<DownloadRequest>,
 ) -> Result<Json<DownloadResponse>, ErrorResponse> {
-    let client = TusClient::new().map_err(|e| ErrorResponse::from(e))?;
+    let client = TusClient::new().map_err(ErrorResponse::from)?;
 
     let output_path = PathBuf::from(&payload.output_path);
     let chunk_size = payload.chunk_size.unwrap_or_else(|| client.upload_config().chunk_size);
@@ -389,7 +389,7 @@ async fn download_handler(
     client
         .download_with_chunk_size(&payload.url, &output_path, chunk_size)
         .await
-        .map_err(|e| ErrorResponse::from(e))?;
+        .map_err(ErrorResponse::from)?;
 
     Ok(Json(DownloadResponse {
         success: true,
@@ -399,8 +399,8 @@ async fn download_handler(
 
 /// List uploads handler
 async fn list_uploads() -> Result<Json<ListUploadsResponse>, ErrorResponse> {
-    let client = TusClient::new().map_err(|e| ErrorResponse::from(e))?;
-    let uploads = client.list_incomplete().map_err(|e| ErrorResponse::from(e))?;
+    let client = TusClient::new().map_err(ErrorResponse::from)?;
+    let uploads = client.list_incomplete().map_err(ErrorResponse::from)?;
     let count = uploads.len();
 
     Ok(Json(ListUploadsResponse { uploads, count }))
@@ -410,8 +410,8 @@ async fn list_uploads() -> Result<Json<ListUploadsResponse>, ErrorResponse> {
 async fn cleanup_handler(
     Json(payload): Json<CleanupRequest>,
 ) -> Result<Json<CleanupResponse>, ErrorResponse> {
-    let client = TusClient::new().map_err(|e| ErrorResponse::from(e))?;
-    let cleaned = client.cleanup(payload.days).map_err(|e| ErrorResponse::from(e))?;
+    let client = TusClient::new().map_err(ErrorResponse::from)?;
+    let cleaned = client.cleanup(payload.days).map_err(ErrorResponse::from)?;
 
     Ok(Json(CleanupResponse { cleaned }))
 }
@@ -420,12 +420,12 @@ async fn cleanup_handler(
 async fn terminate_handler(
     Json(payload): Json<TerminateRequest>,
 ) -> Result<Json<TerminateResponse>, ErrorResponse> {
-    let client = TusClient::new().map_err(|e| ErrorResponse::from(e))?;
+    let client = TusClient::new().map_err(ErrorResponse::from)?;
 
     client
         .terminate_upload(&payload.upload_url)
         .await
-        .map_err(|e| ErrorResponse::from(e))?;
+        .map_err(ErrorResponse::from)?;
 
     Ok(Json(TerminateResponse {
         success: true,
@@ -459,7 +459,7 @@ pub async fn run_server(config: ServerConfig) -> ZtusResult<()> {
     let addr = format!("{}:{}", config.host, config.port);
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
-        .map_err(|e| ZtusError::IoError(e))?;
+        .map_err(ZtusError::IoError)?;
 
     tracing::info!("ztus API server listening on http://{}", addr);
     tracing::info!("Available endpoints:");
@@ -473,7 +473,7 @@ pub async fn run_server(config: ServerConfig) -> ZtusResult<()> {
 
     axum::serve(listener, app)
         .await
-        .map_err(|e| ZtusError::IoError(e))?;
+        .map_err(ZtusError::IoError)?;
 
     Ok(())
 }
@@ -504,12 +504,12 @@ mod tests {
         assert_eq!(config.chunk_size, 10 * 1024 * 1024);
         assert_eq!(config.max_retries, 5);
         assert_eq!(config.timeout, 60);
-        assert_eq!(config.resume, false);
-        assert_eq!(config.verify_checksum, false);
+        assert!(!config.resume);
+        assert!(!config.verify_checksum);
         assert!(matches!(config.checksum_algorithm, crate::config::ChecksumAlgorithm::Sha1));
         assert_eq!(config.headers.len(), 1);
         assert_eq!(config.metadata.len(), 1);
-        assert_eq!(config.adaptive.enabled, false);
+        assert!(!config.adaptive.enabled);
         assert_eq!(config.adaptive.initial_chunk_size, 20 * 1024 * 1024);
         assert_eq!(config.adaptive.min_chunk_size, 2 * 1024 * 1024);
         assert_eq!(config.adaptive.max_chunk_size, 100 * 1024 * 1024);

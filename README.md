@@ -20,6 +20,7 @@ A TUS (tus.io) client because existing ones were out of date or abandoned. Imple
 - **State Persistence**: Automatic resume state storage in `~/.ztus/` with enhanced crash recovery
 - **TUS Protocol Extensions**: Support for creation, termination, checksum, expiration, and concatenation
 - **Cross-Platform**: Native binaries for Linux, macOS (amd64/arm64), and Windows
+- **Python Bindings**: PyO3-based Python API with both sync and async support
 
 ## Install
 
@@ -115,6 +116,126 @@ ztus cleanup --days 7
 # Show configuration
 ztus info
 ```
+
+## Python Usage
+
+ztus includes Python bindings with both synchronous and asynchronous APIs, built with PyO3.
+
+### Installation
+
+```bash
+# From PyPI (once published)
+pip install ztus
+
+# Or build locally from source
+pip install maturin
+cd /path/to/ztus
+maturin develop --release --features python
+```
+
+### Python 3.11+ Required
+
+The Python bindings require Python 3.11 or later (due to PyO3 compatibility).
+
+### Synchronous API
+
+```python
+import ztus
+
+def progress_callback(bytes_transferred: int, total_bytes: int) -> None:
+    """Progress callback function"""
+    if total_bytes > 0:
+        percent = (bytes_transferred / total_bytes) * 100
+        print(f"Progress: {bytes_transferred}/{total_bytes} bytes ({percent:.1f}%)")
+
+# Create client
+client = ztus.TusClient()
+
+# Upload with progress callback
+client.upload(
+    "/path/to/file.txt",
+    "https://tus.server.tld/files",
+    progress_callback=progress_callback
+)
+
+# Download file
+client.download(
+    "https://files.example.com/myfile.zip",
+    "myfile.zip",
+    progress_callback=progress_callback
+)
+
+# List incomplete uploads
+incomplete = client.list_incomplete()
+
+# Clean up old uploads (older than 7 days)
+count = client.cleanup(days=7)
+```
+
+### Asynchronous API
+
+```python
+import asyncio
+import ztus
+
+async def main():
+    def progress_callback(bytes_transferred: int, total_bytes: int) -> None:
+        if total_bytes > 0:
+            percent = (bytes_transferred / total_bytes) * 100
+            print(f"Progress: {bytes_transferred}/{total_bytes} bytes ({percent:.1f}%)")
+
+    client = ztus.TusClient()
+
+    # Upload asynchronously
+    await client.upload_async(
+        "/path/to/file.txt",
+        "https://tus.server.tld/files",
+        progress_callback=progress_callback
+    )
+
+    # Resume interrupted upload
+    await client.resume_async(
+        "/path/to/file.txt",
+        "https://tus.server.tld/files"
+    )
+
+    # Download asynchronously
+    await client.download_async(
+        "https://files.example.com/myfile.zip",
+        "myfile.zip",
+        progress_callback=progress_callback
+    )
+
+asyncio.run(main())
+```
+
+### Available Methods
+
+| Method | Description | Sync | Async |
+|--------|-------------|-----|-------|
+| `upload(file_path, url, progress_callback=None)` | Upload a file | ✅ | ✅ |
+| `resume(file_path, url, progress_callback=None)` | Resume interrupted upload | ✅ | ✅ |
+| `download(url, output_path, chunk_size=None, progress_callback=None)` | Download a file | ✅ | ✅ |
+| `list_incomplete()` | List incomplete uploads | ✅ | ❌ |
+| `cleanup(days)` | Clean up old state | ✅ | ❌ |
+
+### Progress Callback
+
+The progress callback receives two integers:
+- `bytes_transferred`: Total bytes transferred so far
+- `total_bytes`: Total bytes to transfer (0 if unknown)
+
+```python
+def my_callback(bytes_transferred: int, total_bytes: int) -> None:
+    print(f"{bytes_transferred} / {total_bytes}")
+```
+
+### Examples
+
+See `python/examples/` for complete examples:
+- `sync_upload.py` - Synchronous upload with progress
+- `async_upload.py` - Asynchronous upload with progress
+- `progress_callback.py` - Advanced progress tracking with ETA
 
 ## Performance
 

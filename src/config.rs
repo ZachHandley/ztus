@@ -18,7 +18,7 @@ pub const DEFAULT_TUS_VERSION: &str = "1.0.0";
 pub const DEFAULT_ADAPTIVE_INITIAL_CHUNK_SIZE: usize = 10 * 1024 * 1024;
 
 /// Default minimum chunk size for adaptive uploads (1 MB)
-pub const DEFAULT_ADAPTIVE_MIN_CHUNK_SIZE: usize = 1 * 1024 * 1024;
+pub const DEFAULT_ADAPTIVE_MIN_CHUNK_SIZE: usize = 1024 * 1024;
 
 /// Default maximum chunk size for adaptive uploads (200 MB)
 pub const DEFAULT_ADAPTIVE_MAX_CHUNK_SIZE: usize = 200 * 1024 * 1024;

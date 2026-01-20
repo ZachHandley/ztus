@@ -94,8 +94,8 @@ fn test_tus_extension_roundtrip() {
 
         // Test roundtrip by cloning to avoid borrow checker
         let ext_clone = ext.clone();
-        let parsed = TusExtension::from_str(str_repr);
-        assert_eq!(parsed, Some(ext_clone), "Failed roundtrip for: {}", str_repr);
+        let parsed = str_repr.parse::<TusExtension>();
+        assert_eq!(parsed, Ok(ext_clone), "Failed roundtrip for: {}", str_repr);
     }
 }
 
