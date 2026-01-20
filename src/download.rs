@@ -3,8 +3,8 @@
 //! This module provides HTTP Range download functionality with resume support.
 
 use crate::error::{Result, ZtusError};
+use crate::progress::{ProgressReporter, TerminalProgress};
 use crate::storage::{DownloadState, StateStorage};
-use indicatif::{ProgressBar, ProgressStyle};
 use std::path::Path;
 use std::time::Duration;
 use tokio::fs::File;
@@ -16,6 +16,7 @@ pub struct DownloadManager {
     chunk_size: usize,
     storage: StateStorage,
     max_retries: usize,
+    progress: Box<dyn ProgressReporter>,
 }
 
 impl DownloadManager {
@@ -38,6 +39,30 @@ impl DownloadManager {
             chunk_size,
             storage,
             max_retries: 3,
+            progress: Box::new(TerminalProgress::new(0)),
+        })
+    }
+
+    /// Create a new download manager with a custom progress reporter
+    pub fn with_progress(chunk_size: usize, progress: Box<dyn ProgressReporter>) -> Result<Self> {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(ZtusError::from)?;
+
+        // Get state directory from environment or use default
+        let state_dir = dirs::state_dir()
+            .unwrap_or_else(|| dirs::home_dir().unwrap())
+            .join("ztus");
+
+        let storage = StateStorage::new(state_dir)?;
+
+        Ok(Self {
+            client,
+            chunk_size,
+            storage,
+            max_retries: 3,
+            progress,
         })
     }
 
@@ -236,15 +261,9 @@ impl DownloadManager {
             ));
         }
 
-        // Create progress bar
-        let progress = ProgressBar::new(total_size);
-        progress.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-                .map_err(|e| ZtusError::ConfigError(e.to_string()))?
-                .progress_chars("##-")
-        );
-        progress.set_position(start_offset);
+        // Initialize progress bar
+        self.progress.set_total(total_size);
+        self.progress.report_progress(start_offset, total_size)?;
 
         // Open file for appending (create if doesn't exist)
         let mut file = File::options()
@@ -317,7 +336,7 @@ impl DownloadManager {
                 let chunk = chunk_result.map_err(ZtusError::from)?;
                 writer.write_all(&chunk).await.map_err(ZtusError::from)?;
                 current_offset += chunk.len() as u64;
-                progress.set_position(current_offset);
+                self.progress.report_progress(current_offset, total_size)?;
             }
 
             writer.flush().await.map_err(ZtusError::from)?;
@@ -333,7 +352,7 @@ impl DownloadManager {
             tokio::task::yield_now().await;
         }
 
-        progress.finish_with_message("Download complete!");
+        self.progress.finish("Download complete!");
 
         Ok(())
     }

@@ -18,6 +18,7 @@ path = "src/main.rs"
 [lib]
 name = "ztus"
 path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 anyhow = "1.0.100"
@@ -40,10 +41,17 @@ tracing-subscriber = "0.3.22"
 url = "2.5"
 axum = "0.7.9"
 tower-http = { version = "0.6.8", features = ["cors", "trace"] }
+# Python bindings (optional)
+pyo3 = { version = "0.20", features = ["extension-module"], optional = true }
+pyo3-asyncio = { version = "0.20", features = ["tokio-runtime"], optional = true }
 
 [dev-dependencies]
 tempfile = "3.15"
 tokio-test = "0.4"
+
+[features]
+default = []
+python = ["pyo3", "pyo3-asyncio"]
 
 [profile.release]
 opt-level = 3

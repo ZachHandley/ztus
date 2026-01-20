@@ -8,6 +8,7 @@ mod client;
 mod config;
 mod download;
 mod error;
+mod progress;
 mod protocol;
 mod server;
 mod storage;

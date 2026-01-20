@@ -1,0 +1,15 @@
+{
+  "include": [
+    "python/**/*.py"
+  ],
+  "exclude": [
+    "**/test_*.py",
+    "**/tests/"
+  ],
+  "reportMissingImports": "warning",
+  "reportUnknownVariableType": "warning",
+  "reportUnknownMemberType": "warning",
+  "reportImplicitRelativeImport": "warning",
+  "reportUnannotatedClassAttribute": "warning",
+  "reportImplicitStringConcatenation": "warning"
+}

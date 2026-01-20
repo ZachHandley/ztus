@@ -5,9 +5,9 @@
 use crate::checksum::calculate_file_checksum;
 use crate::config::UploadConfig;
 use crate::error::{Result, ZtusError};
+use crate::progress::{ProgressReporter, TerminalProgress};
 use crate::protocol::TusProtocol;
 use crate::storage::{StateStorage, UploadState};
-use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tokio::fs::File;
@@ -18,6 +18,7 @@ pub struct UploadManager {
     protocol: TusProtocol,
     config: UploadConfig,
     storage: StateStorage,
+    progress: Box<dyn ProgressReporter>,
 }
 
 impl UploadManager {
@@ -58,6 +59,38 @@ impl UploadManager {
             protocol,
             config,
             storage,
+            progress: Box::new(TerminalProgress::new(0)),
+        })
+    }
+
+    /// Create a new upload manager with a custom progress reporter
+    pub fn with_progress(
+        base_url: String,
+        config: UploadConfig,
+        state_dir: PathBuf,
+        progress: Box<dyn ProgressReporter>,
+    ) -> Result<Self> {
+        let headers = config.headers.clone();
+        let protocol = if headers.is_empty() {
+            TusProtocol::new(
+                base_url,
+                Duration::from_secs(config.timeout),
+            )?
+        } else {
+            TusProtocol::with_headers(
+                base_url,
+                Duration::from_secs(config.timeout),
+                headers,
+            )?
+        };
+
+        let storage = StateStorage::new(state_dir)?;
+
+        Ok(Self {
+            protocol,
+            config,
+            storage,
+            progress,
         })
     }
 
@@ -136,15 +169,9 @@ impl UploadManager {
                 .map_err(ZtusError::from)?;
         }
 
-        // Create progress bar with percentage
-        let progress = ProgressBar::new(file_size);
-        progress.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({percent}%) {bytes_per_sec} ETA: {eta}")
-                .map_err(|e| ZtusError::ConfigError(e.to_string()))?
-                .progress_chars("##-")
-        );
-        progress.set_position(offset);
+        // Initialize progress bar with total bytes
+        self.progress.set_total(file_size);
+        self.progress.report_progress(offset, file_size)?;
 
         // Log chunk size being used
         tracing::info!("Chunk size: {} MB", self.config.chunk_size / 1024 / 1024);
@@ -392,7 +419,7 @@ impl UploadManager {
                     .map_err(ZtusError::from)?;
 
                 offset = server_offset;
-                progress.set_position(offset);
+                self.progress.report_progress(offset, file_size)?;
 
                 // Update state
                 let state = UploadState {
@@ -410,7 +437,7 @@ impl UploadManager {
             }
 
             offset = new_offset;
-            progress.set_position(offset);
+            self.progress.report_progress(offset, file_size)?;
             if file_size > 0 {
                 let percent = (offset * 100) / file_size;
                 if percent > last_percent {
@@ -454,7 +481,7 @@ impl UploadManager {
             }
         }
 
-        progress.finish_with_message("Upload complete!");
+        self.progress.finish("Upload complete!");
 
         // Clean up state file
         self.storage.delete_state(&state_id)?;
