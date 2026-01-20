@@ -158,13 +158,17 @@ jobs:
           PKG_VERSION="${{ steps.get_version.outputs.version }}"
           echo "Replacing PKG_VERSION with $PKG_VERSION"
 
+          # Replace in Cargo.toml
+          sed -i "s/^version = \"0.0.0-dev\"/version = \"$PKG_VERSION\"/" Cargo.toml
+
           # Replace in pyproject.toml
-          sed -i "s/^version = \"0.0.0 # Replaced by PKG_VERSION in CI\/CD\"/version = \"$PKG_VERSION\"/" pyproject.toml
+          sed -i "s/^version = \"0.0.0-dev\"/version = \"$PKG_VERSION\"/" pyproject.toml
 
           # Replace in python/ztus/__init__.py
-          sed -i "s/__version__ = \"0.0.0\"/__version__ = \"$PKG_VERSION\"/" python/ztus/__init__.py
+          sed -i "s/__version__ = \"0.0.0-dev\"/__version__ = \"$PKG_VERSION\"/" python/ztus/__init__.py
 
           echo "Updated versions:"
+          grep "^version = " Cargo.toml || true
           grep "^version = " pyproject.toml || true
           grep "__version__" python/ztus/__init__.py || true
 
