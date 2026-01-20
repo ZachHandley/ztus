@@ -131,31 +131,75 @@ jobs:
             ${{ matrix.asset_name }}.tar.gz
             ${{ matrix.asset_name }}.zip
 
-  publish-to-cratesio:
-    name: Publish to crates.io
+  publish-packages:
+    name: Publish packages
     runs-on: ubuntu-latest
-    # Only publish on tags OR manual dispatch with publish=true
-    if: |
-      (startsWith(github.ref, 'refs/tags/')) ||
-      (github.event_name == 'workflow_dispatch' && inputs.publish == 'true')
     needs: build
 
     steps:
+      - name: Check release conditions
+        id: check_release
+        run: |
+          set -eo pipefail
+
+          echo "=== Release Conditions Check ==="
+          echo "Event: ${{ github.event_name }}"
+          echo "Ref: ${{ github.ref }}"
+          echo "Publish input: ${{ inputs.publish }}"
+
+          # Check if this is a tag push
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/v}
+            echo "✓ Tag push detected: v$VERSION"
+            echo "should_publish=true" >> $GITHUB_OUTPUT
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Check if this is a manual dispatch with publish=true
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ "${{ inputs.publish }}" = "true" ]; then
+              if [ -n "${{ inputs.version }}" ]; then
+                VERSION="${{ inputs.version }}"
+                echo "✓ Manual publish requested with version: $VERSION"
+                echo "should_publish=true" >> $GITHUB_OUTPUT
+                echo "version=$VERSION" >> $GITHUB_OUTPUT
+                exit 0
+              else
+                echo "✗ Error: Manual publish requires a version input"
+                echo "  Please provide a version (e.g., 1.2.3)"
+                exit 1
+              fi
+            else
+              echo "ℹ Skipping: publish=false"
+              echo "  To publish, re-run with 'publish' checked"
+              echo "should_publish=false" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+          fi
+
+          echo "✗ Error: Must be a tag push or manual dispatch with publish=true"
+          exit 1
+
       - name: Checkout repository
+        if: steps.check_release.outputs.should_publish == 'true'
         uses: actions/checkout@v4
 
       - name: Setup Rust toolchain
+        if: steps.check_release.outputs.should_publish == 'true'
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
 
       - name: Cache cargo registry
+        if: steps.check_release.outputs.should_publish == 'true'
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Cache cargo index
+        if: steps.check_release.outputs.should_publish == 'true'
         uses: actions/cache@v4
         with:
           path: ~/.cargo/git
@@ -163,21 +207,14 @@ jobs:
 
       - name: Extract version from tag or input
         id: get_version
+        if: steps.check_release.outputs.should_publish == 'true'
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.version }}" ]; then
-            VERSION="${{ inputs.version }}"
-            echo "Using manual version: $VERSION"
-          elif startsWith("${{ github.ref }}", "refs/tags/"); then
-            VERSION=${GITHUB_REF#refs/tags/v}
-            echo "Using tag version: $VERSION"
-          else
-            echo "Error: Version must be provided for publishing"
-            echo "Either push a tag (e.g., v1.2.3) or use workflow_dispatch with version input"
-            exit 1
-          fi
+          VERSION="${{ steps.check_release.outputs.version }}"
+          echo "Using version: $VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Replace PKG_VERSION in files
+        if: steps.check_release.outputs.should_publish == 'true'
         run: |
           PKG_VERSION="${{ steps.get_version.outputs.version }}"
           echo "Replacing PKG_VERSION with $PKG_VERSION"
@@ -197,6 +234,7 @@ jobs:
           grep "__version__" python/ztus/__init__.py || true
 
       - name: Verify version matches
+        if: steps.check_release.outputs.should_publish == 'true'
         run: |
           EXPECTED_VERSION="${{ steps.get_version.outputs.version }}"
           CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)".*/\1/')
@@ -212,40 +250,49 @@ jobs:
           echo "Version match confirmed!"
 
       - name: Run cargo test
+        if: steps.check_release.outputs.should_publish == 'true'
         run: cargo test --verbose
 
       - name: Run cargo clippy
+        if: steps.check_release.outputs.should_publish == 'true'
         run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Run cargo fmt check
+        if: steps.check_release.outputs.should_publish == 'true'
         run: cargo fmt --all -- --check
 
       - name: Build documentation
+        if: steps.check_release.outputs.should_publish == 'true'
         run: cargo doc --no-deps --all-features
 
       - name: Publish to crates.io
+        if: steps.check_release.outputs.should_publish == 'true'
         run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
       - name: Set up Python
+        if: steps.check_release.outputs.should_publish == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
 
       - name: Install uv
+        if: steps.check_release.outputs.should_publish == 'true'
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
 
       - name: Install maturin with uv
+        if: steps.check_release.outputs.should_publish == 'true'
         run: uv pip install maturin
 
       - name: Build and publish to PyPI (via Trusted Publishers)
+        if: steps.check_release.outputs.should_publish == 'true'
         run: uv run maturin publish
         # Uses PyPI Trusted Publishers (OIDC) - no token needed
 
   release:
     name: Create Release
-    needs: [build, publish-to-cratesio]
+    needs: [build, publish-packages]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
 
