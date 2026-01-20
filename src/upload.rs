@@ -64,6 +64,7 @@ impl UploadManager {
     }
 
     /// Create a new upload manager with a custom progress reporter
+    #[allow(dead_code)]
     pub fn with_progress(
         base_url: String,
         config: UploadConfig,

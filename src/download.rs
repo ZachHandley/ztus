@@ -44,6 +44,7 @@ impl DownloadManager {
     }
 
     /// Create a new download manager with a custom progress reporter
+    #[allow(dead_code)]
     pub fn with_progress(chunk_size: usize, progress: Box<dyn ProgressReporter>) -> Result<Self> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))

@@ -55,6 +55,7 @@ impl ProgressReporter for TerminalProgress {
 }
 
 /// No-op progress reporter for when progress isn't needed
+#[allow(dead_code)]
 pub struct NoOpProgress;
 
 impl ProgressReporter for NoOpProgress {
