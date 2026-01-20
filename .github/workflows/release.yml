@@ -2,9 +2,21 @@ name: Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*.*.*'
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version override (e.g., 1.2.3) - only for tagged releases'
+        required: false
+        type: string
+      publish:
+        description: 'Publish to crates.io/PyPI (only for tagged releases)'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -122,7 +134,10 @@ jobs:
   publish-to-cratesio:
     name: Publish to crates.io
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    # Only publish on tags OR manual dispatch with publish=true
+    if: |
+      (startsWith(github.ref, 'refs/tags/')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish == 'true')
     needs: build
 
     steps:
@@ -146,12 +161,21 @@ jobs:
           path: ~/.cargo/git
           key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Extract version from tag
+      - name: Extract version from tag or input
         id: get_version
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+            echo "Using manual version: $VERSION"
+          elif startsWith("${{ github.ref }}", "refs/tags/"); then
+            VERSION=${GITHUB_REF#refs/tags/v}
+            echo "Using tag version: $VERSION"
+          else
+            echo "Error: Version must be provided for publishing"
+            echo "Either push a tag (e.g., v1.2.3) or use workflow_dispatch with version input"
+            exit 1
+          fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Tag version: $VERSION"
 
       - name: Replace PKG_VERSION in files
         run: |
@@ -172,16 +196,16 @@ jobs:
           grep "^version = " pyproject.toml || true
           grep "__version__" python/ztus/__init__.py || true
 
-      - name: Verify version matches Cargo.toml
+      - name: Verify version matches
         run: |
-          TAG_VERSION="${{ steps.get_version.outputs.version }}"
+          EXPECTED_VERSION="${{ steps.get_version.outputs.version }}"
           CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)".*/\1/')
 
-          echo "Tag version: $TAG_VERSION"
+          echo "Expected version: $EXPECTED_VERSION"
           echo "Cargo.toml version: $CARGO_VERSION"
 
-          if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
-            echo "Error: Tag version ($TAG_VERSION) does not match Cargo.toml version ($CARGO_VERSION)"
+          if [ "$EXPECTED_VERSION" != "$CARGO_VERSION" ]; then
+            echo "Error: Version mismatch!"
             exit 1
           fi
 
@@ -203,6 +227,21 @@ jobs:
         run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Install maturin with uv
+        run: uv pip install maturin
+
+      - name: Build and publish to PyPI (via Trusted Publishers)
+        run: uv run maturin publish
+        # Uses PyPI Trusted Publishers (OIDC) - no token needed
 
   release:
     name: Create Release
