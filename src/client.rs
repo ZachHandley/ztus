@@ -21,13 +21,9 @@ impl TusClient {
         let state_dir = config.state_dir.join("state");
 
         // Ensure state directory exists
-        std::fs::create_dir_all(&state_dir)
-            .map_err(crate::error::ZtusError::from)?;
+        std::fs::create_dir_all(&state_dir).map_err(crate::error::ZtusError::from)?;
 
-        Ok(Self {
-            config,
-            state_dir,
-        })
+        Ok(Self { config, state_dir })
     }
 
     /// Create a new TUS client with custom configuration
@@ -36,19 +32,16 @@ impl TusClient {
         let state_dir = config.state_dir.join("state");
 
         // Ensure state directory exists
-        std::fs::create_dir_all(&state_dir)
-            .map_err(crate::error::ZtusError::from)?;
+        std::fs::create_dir_all(&state_dir).map_err(crate::error::ZtusError::from)?;
 
-        Ok(Self {
-            config,
-            state_dir,
-        })
+        Ok(Self { config, state_dir })
     }
 
     /// Upload a file to a TUS endpoint
     #[allow(dead_code)]
     pub async fn upload(&self, file_path: &Path, upload_url: &str) -> Result<()> {
-        self.upload_with_config(file_path, upload_url, &self.config.upload).await
+        self.upload_with_config(file_path, upload_url, &self.config.upload)
+            .await
     }
 
     /// Upload a file to a TUS endpoint with custom configuration
@@ -70,7 +63,8 @@ impl TusClient {
     /// Resume an incomplete upload
     #[allow(dead_code)]
     pub async fn resume(&self, file_path: &Path, upload_url: &str) -> Result<()> {
-        self.resume_with_config(file_path, upload_url, &self.config.upload).await
+        self.resume_with_config(file_path, upload_url, &self.config.upload)
+            .await
     }
 
     /// Resume an incomplete upload with custom configuration
@@ -120,10 +114,7 @@ impl TusClient {
 
         let states = manager.list_incomplete()?;
 
-        Ok(states
-            .into_iter()
-            .map(|s| s.to_string())
-            .collect())
+        Ok(states.into_iter().map(|s| s.to_string()).collect())
     }
 
     /// List incomplete uploads, returning state objects for custom formatting
@@ -164,7 +155,10 @@ impl TusClient {
     }
 
     /// Discover server capabilities
-    pub async fn discover_capabilities(&self, url: &str) -> Result<crate::protocol::ServerCapabilities> {
+    pub async fn discover_capabilities(
+        &self,
+        url: &str,
+    ) -> Result<crate::protocol::ServerCapabilities> {
         use std::time::Duration;
         let headers = self.config.upload.headers.clone();
         let protocol = if headers.is_empty() {
@@ -218,7 +212,8 @@ impl TusClient {
         } else {
             // Fallback: remove last path segment
             if let Some(last_slash) = url.rfind('/') {
-                if last_slash > 8 { // Ensure we don't cut into http://
+                if last_slash > 8 {
+                    // Ensure we don't cut into http://
                     url[..last_slash].to_string()
                 } else {
                     url.to_string()

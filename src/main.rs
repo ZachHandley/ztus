@@ -258,21 +258,23 @@ fn parse_metadata(metadata_args: &[String]) -> Result<Vec<(String, String)>> {
         if let Some((key, value)) = arg.split_once(':') {
             if key.is_empty() {
                 return Err(error::ZtusError::ConfigError(
-                    "Metadata key cannot be empty".to_string()
+                    "Metadata key cannot be empty".to_string(),
                 ));
             }
             if value.is_empty() {
-                return Err(error::ZtusError::ConfigError(
-                    format!("Metadata value for key '{}' cannot be empty", key)
-                ));
+                return Err(error::ZtusError::ConfigError(format!(
+                    "Metadata value for key '{}' cannot be empty",
+                    key
+                )));
             }
             metadata.push((key.to_string(), value.to_string()));
         } else {
             // If no colon found, treat the entire string as a key with empty value
             // This is an error condition
-            return Err(error::ZtusError::ConfigError(
-                format!("Invalid metadata format '{}'. Expected 'key:value'", arg)
-            ));
+            return Err(error::ZtusError::ConfigError(format!(
+                "Invalid metadata format '{}'. Expected 'key:value'",
+                arg
+            )));
         }
     }
 
@@ -286,7 +288,10 @@ fn merge_kv_case_sensitive(
     merge_kv(base, overrides, |key| key.to_string())
 }
 
-fn merge_headers(base: Vec<(String, String)>, overrides: Vec<(String, String)>) -> Vec<(String, String)> {
+fn merge_headers(
+    base: Vec<(String, String)>,
+    overrides: Vec<(String, String)>,
+) -> Vec<(String, String)> {
     merge_kv(base, overrides, |key| key.to_ascii_lowercase())
 }
 
@@ -340,20 +345,22 @@ fn parse_headers(header_args: &[String]) -> Result<Vec<(String, String)>> {
 
             if key.is_empty() {
                 return Err(error::ZtusError::ConfigError(
-                    "Header key cannot be empty".to_string()
+                    "Header key cannot be empty".to_string(),
                 ));
             }
             if value.is_empty() {
-                return Err(error::ZtusError::ConfigError(
-                    format!("Header value for key '{}' cannot be empty", key)
-                ));
+                return Err(error::ZtusError::ConfigError(format!(
+                    "Header value for key '{}' cannot be empty",
+                    key
+                )));
             }
             headers.push((key.to_string(), value.to_string()));
         } else {
             // If no colon found, this is an error
-            return Err(error::ZtusError::ConfigError(
-                format!("Invalid header format '{}'. Expected 'key:value'", arg)
-            ));
+            return Err(error::ZtusError::ConfigError(format!(
+                "Invalid header format '{}'. Expected 'key:value'",
+                arg
+            )));
         }
     }
 
@@ -372,9 +379,7 @@ async fn main() -> Result<()> {
         tracing::Level::INFO
     };
 
-    tracing_subscriber::fmt()
-        .with_max_level(log_level)
-        .init();
+    tracing_subscriber::fmt().with_max_level(log_level).init();
 
     // Create TUS client
     let client = TusClient::new()?;
@@ -408,7 +413,10 @@ async fn main() -> Result<()> {
             if let Some(size) = chunk_size {
                 config.chunk_size = size;
                 config.adaptive.enabled = false;
-                tracing::debug!("Fixed chunk size set to {} bytes, adaptive chunk sizing disabled", size);
+                tracing::debug!(
+                    "Fixed chunk size set to {} bytes, adaptive chunk sizing disabled",
+                    size
+                );
             }
 
             // Handle adaptive chunk sizing flags
@@ -482,7 +490,8 @@ async fn main() -> Result<()> {
                 Vec::new()
             };
 
-            let mut merged_metadata = merge_kv_case_sensitive(config.metadata.clone(), parsed_metadata);
+            let mut merged_metadata =
+                merge_kv_case_sensitive(config.metadata.clone(), parsed_metadata);
 
             // Auto-add filename from file path if not provided
             if !metadata_has_key(&merged_metadata, "filename") {
@@ -538,7 +547,9 @@ async fn main() -> Result<()> {
 
             let size = chunk_size.unwrap_or_else(|| client.upload_config().chunk_size);
 
-            client.download_with_chunk_size(&url, output_path, size).await?;
+            client
+                .download_with_chunk_size(&url, output_path, size)
+                .await?;
         }
 
         Commands::List => {
@@ -595,11 +606,17 @@ async fn main() -> Result<()> {
                 println!("State Directory: {}", client.state_dir().display());
                 println!();
                 println!("Upload Configuration:");
-                println!("  Chunk Size: {} MB", client.upload_config().chunk_size / 1024 / 1024);
+                println!(
+                    "  Chunk Size: {} MB",
+                    client.upload_config().chunk_size / 1024 / 1024
+                );
                 println!("  TUS Version: {}", client.upload_config().tus_version);
                 println!("  Max Retries: {}", client.upload_config().max_retries);
                 println!("  Timeout: {} seconds", client.upload_config().timeout);
-                println!("  Verify Checksum: {}", client.upload_config().verify_checksum);
+                println!(
+                    "  Verify Checksum: {}",
+                    client.upload_config().verify_checksum
+                );
             }
         }
 
@@ -649,15 +666,22 @@ async fn main() -> Result<()> {
                 println!("State Directory: {}", config.state_dir.display());
                 println!();
                 println!("Upload Settings:");
-                println!("  upload.chunk_size        = {} ({} MB)",
+                println!(
+                    "  upload.chunk_size        = {} ({} MB)",
                     config.upload.chunk_size,
                     config.upload.chunk_size / 1024 / 1024
                 );
                 println!("  upload.tus_version       = {}", config.upload.tus_version);
                 println!("  upload.max_retries       = {}", config.upload.max_retries);
                 println!("  upload.timeout           = {}", config.upload.timeout);
-                println!("  upload.verify_checksum   = {}", config.upload.verify_checksum);
-                println!("  upload.checksum_algorithm = {:?}", config.upload.checksum_algorithm);
+                println!(
+                    "  upload.verify_checksum   = {}",
+                    config.upload.verify_checksum
+                );
+                println!(
+                    "  upload.checksum_algorithm = {:?}",
+                    config.upload.checksum_algorithm
+                );
             }
 
             ConfigCommands::Edit => {
@@ -727,7 +751,8 @@ async fn main() -> Result<()> {
                 println!("Creating batch with {} files...", files.len());
 
                 // Execute batch upload
-                let result = batch::execute_batch_upload(&url, files, &config, parsed_headers).await?;
+                let result =
+                    batch::execute_batch_upload(&url, files, &config, parsed_headers).await?;
 
                 println!("Batch ID: {}", result.batch.batch_id);
                 println!(
@@ -818,7 +843,10 @@ mod tests {
         let metadata = vec![":value".to_string()];
         let result = parse_metadata(&metadata);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("key cannot be empty"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("key cannot be empty"));
     }
 
     #[test]
@@ -826,7 +854,10 @@ mod tests {
         let metadata = vec!["filename".to_string()];
         let result = parse_metadata(&metadata);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Invalid metadata format"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid metadata format"));
     }
 
     #[test]
@@ -845,9 +876,15 @@ mod tests {
         ];
         let result = parse_metadata(&metadata).unwrap();
         assert_eq!(result.len(), 3);
-        assert_eq!(result[0], ("filename".to_string(), "test file.txt".to_string()));
+        assert_eq!(
+            result[0],
+            ("filename".to_string(), "test file.txt".to_string())
+        );
         assert_eq!(result[1], ("path".to_string(), "/path/to/file".to_string()));
-        assert_eq!(result[2], ("url".to_string(), "https://example.com".to_string()));
+        assert_eq!(
+            result[2],
+            ("url".to_string(), "https://example.com".to_string())
+        );
     }
 
     #[test]
@@ -868,9 +905,21 @@ mod tests {
         ];
         let result = parse_headers(&headers).unwrap();
         assert_eq!(result.len(), 3);
-        assert_eq!(result[0], (String::from("X-API-Key"), String::from("secret123")));
-        assert_eq!(result[1], (String::from("Authorization"), String::from("Bearer token")));
-        assert_eq!(result[2], (String::from("Content-Type"), String::from("application/json")));
+        assert_eq!(
+            result[0],
+            (String::from("X-API-Key"), String::from("secret123"))
+        );
+        assert_eq!(
+            result[1],
+            (String::from("Authorization"), String::from("Bearer token"))
+        );
+        assert_eq!(
+            result[2],
+            (
+                String::from("Content-Type"),
+                String::from("application/json")
+            )
+        );
     }
 
     #[test]
@@ -911,7 +960,10 @@ mod tests {
         let headers = vec![":secret123".to_string()];
         let result = parse_headers(&headers);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("key cannot be empty"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("key cannot be empty"));
     }
 
     #[test]
@@ -919,7 +971,10 @@ mod tests {
         let headers = vec!["X-API-Key".to_string()];
         let result = parse_headers(&headers);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Invalid header format"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid header format"));
     }
 
     #[test]
@@ -929,4 +984,3 @@ mod tests {
         assert_eq!(result.len(), 0);
     }
 }
-

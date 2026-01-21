@@ -110,9 +110,17 @@ impl std::fmt::Display for ServerCapabilities {
         if let Some(max) = self.max_size {
             writeln!(f, "Maximum Upload Size: {} bytes", max)?;
             if max >= 1024 * 1024 * 1024 {
-                writeln!(f, "                     ({:.2} GB)", max as f64 / (1024.0 * 1024.0 * 1024.0))?;
+                writeln!(
+                    f,
+                    "                     ({:.2} GB)",
+                    max as f64 / (1024.0 * 1024.0 * 1024.0)
+                )?;
             } else if max >= 1024 * 1024 {
-                writeln!(f, "                     ({:.2} MB)", max as f64 / (1024.0 * 1024.0))?;
+                writeln!(
+                    f,
+                    "                     ({:.2} MB)",
+                    max as f64 / (1024.0 * 1024.0)
+                )?;
             }
         } else {
             writeln!(f, "Maximum Upload Size: Not specified by server")?;
@@ -131,13 +139,7 @@ impl std::fmt::Display for ServerCapabilities {
 pub fn encode_metadata(metadata: &HashMap<String, String>) -> String {
     metadata
         .iter()
-        .map(|(key, value)| {
-            format!(
-                "{} {}",
-                key,
-                base64::prelude::BASE64_STANDARD.encode(value)
-            )
-        })
+        .map(|(key, value)| format!("{} {}", key, base64::prelude::BASE64_STANDARD.encode(value)))
         .collect::<Vec<_>>()
         .join(",")
 }
@@ -167,19 +169,17 @@ pub fn decode_metadata(metadata_header: &str) -> Result<HashMap<String, String>>
 
             // Decode base64 value
             match base64::prelude::BASE64_STANDARD.decode(encoded_value) {
-                Ok(decoded_bytes) => {
-                    match String::from_utf8(decoded_bytes) {
-                        Ok(value) => {
-                            metadata.insert(key.to_string(), value);
-                        }
-                        Err(_) => {
-                            tracing::warn!(
-                                "Metadata value for key '{}' is not valid UTF-8, skipping",
-                                key
-                            );
-                        }
+                Ok(decoded_bytes) => match String::from_utf8(decoded_bytes) {
+                    Ok(value) => {
+                        metadata.insert(key.to_string(), value);
                     }
-                }
+                    Err(_) => {
+                        tracing::warn!(
+                            "Metadata value for key '{}' is not valid UTF-8, skipping",
+                            key
+                        );
+                    }
+                },
                 Err(_) => {
                     tracing::warn!(
                         "Metadata value for key '{}' is not valid base64, skipping",
@@ -311,13 +311,13 @@ impl TusProtocol {
             .http2_prior_knowledge()
             .http2_keep_alive_interval(Duration::from_secs(30))
             .http2_keep_alive_timeout(Duration::from_secs(10))
-            .http2_adaptive_window(true)  // Auto-adjust flow control window
+            .http2_adaptive_window(true) // Auto-adjust flow control window
             // Connection pool - INCREASED for HTTP/2 multiplexing
-            .pool_max_idle_per_host(10)   // Was 1, now 10 for better concurrency
+            .pool_max_idle_per_host(10) // Was 1, now 10 for better concurrency
             .pool_idle_timeout(Duration::from_secs(90))
             // TCP optimizations
-            .tcp_nodelay(true)  // Disable Nagle's algorithm - CRITICAL for upload speed
-            .tcp_keepalive(Duration::from_secs(60))  // Detect dead connections
+            .tcp_nodelay(true) // Disable Nagle's algorithm - CRITICAL for upload speed
+            .tcp_keepalive(Duration::from_secs(60)) // Detect dead connections
             // Connection limits
             .connect_timeout(Duration::from_secs(10))
             .build()
@@ -333,14 +333,18 @@ impl TusProtocol {
     }
 
     /// Create a new TUS protocol client with custom headers
-    pub fn with_headers(base_url: String, timeout: Duration, headers: Vec<(String, String)>) -> Result<Self> {
+    pub fn with_headers(
+        base_url: String,
+        timeout: Duration,
+        headers: Vec<(String, String)>,
+    ) -> Result<Self> {
         let client = Client::builder()
             .timeout(timeout)
             .http2_prior_knowledge()
             .http2_keep_alive_interval(Duration::from_secs(30))
             .http2_keep_alive_timeout(Duration::from_secs(10))
             .http2_adaptive_window(true)
-            .pool_max_idle_per_host(10)  // Was 1
+            .pool_max_idle_per_host(10) // Was 1
             .pool_idle_timeout(Duration::from_secs(90))
             .tcp_nodelay(true)
             .tcp_keepalive(Duration::from_secs(60))
@@ -358,10 +362,7 @@ impl TusProtocol {
     }
 
     /// Add custom headers to a request builder
-    fn apply_headers(
-        &self,
-        mut request: reqwest::RequestBuilder,
-    ) -> reqwest::RequestBuilder {
+    fn apply_headers(&self, mut request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         for (key, value) in &self.headers {
             request = request.header(key, value);
         }
@@ -370,15 +371,10 @@ impl TusProtocol {
 
     /// Discover server capabilities via OPTIONS request
     pub async fn discover_capabilities(&self) -> Result<ServerCapabilities> {
-        let request = self
-            .client
-            .request(Method::OPTIONS, &self.base_url);
+        let request = self.client.request(Method::OPTIONS, &self.base_url);
         let request = self.apply_headers(request);
 
-        let response = request
-            .send()
-            .await
-            .map_err(ZtusError::from)?;
+        let response = request.send().await.map_err(ZtusError::from)?;
 
         if response.status() != StatusCode::OK {
             return Err(ZtusError::ProtocolError(format!(
@@ -451,19 +447,16 @@ impl TusProtocol {
         }
 
         // Parse the base URL
-        let base = Url::parse(base_url).map_err(|e| {
-            ZtusError::ProtocolError(format!("Invalid base URL: {}", e))
-        })?;
+        let base = Url::parse(base_url)
+            .map_err(|e| ZtusError::ProtocolError(format!("Invalid base URL: {}", e)))?;
 
         // Use the url crate's join method which implements RFC 3986
-        let resolved = base
-            .join(location)
-            .map_err(|e| {
-                ZtusError::ProtocolError(format!(
-                    "Failed to resolve Location URL '{}' against base '{}': {}",
-                    location, base_url, e
-                ))
-            })?;
+        let resolved = base.join(location).map_err(|e| {
+            ZtusError::ProtocolError(format!(
+                "Failed to resolve Location URL '{}' against base '{}': {}",
+                location, base_url, e
+            ))
+        })?;
 
         Ok(resolved.to_string())
     }
@@ -541,11 +534,18 @@ impl TusProtocol {
             }
             status => {
                 // Try to read error response body for better error messages
-                let error_body = response.text().await.unwrap_or_else(|_| "<unable to read response body>".to_string());
+                let error_body = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "<unable to read response body>".to_string());
                 let error_msg = if error_body.is_empty() || error_body.contains('<') {
                     format!("Create upload failed with status: {}", status)
                 } else {
-                    format!("Create upload failed with status: {} - Server error: {}", status, error_body.trim())
+                    format!(
+                        "Create upload failed with status: {} - Server error: {}",
+                        status,
+                        error_body.trim()
+                    )
                 };
                 Err(ZtusError::ProtocolError(error_msg))
             }
@@ -560,10 +560,7 @@ impl TusProtocol {
             .header(TUS_RESUMABLE, TUS_VERSION);
         let request = self.apply_headers(request);
 
-        let response = request
-            .send()
-            .await
-            .map_err(ZtusError::from)?;
+        let response = request.send().await.map_err(ZtusError::from)?;
 
         match response.status() {
             StatusCode::OK => {
@@ -578,9 +575,7 @@ impl TusProtocol {
 
                 Ok(offset)
             }
-            StatusCode::NOT_FOUND | StatusCode::GONE => {
-                Err(ZtusError::UploadTerminated)
-            }
+            StatusCode::NOT_FOUND | StatusCode::GONE => Err(ZtusError::UploadTerminated),
             status => Err(ZtusError::ProtocolError(format!(
                 "HEAD request failed with status: {}",
                 status
@@ -589,12 +584,7 @@ impl TusProtocol {
     }
 
     /// Upload a chunk (PATCH request)
-    pub async fn upload_chunk(
-        &self,
-        upload_url: &str,
-        offset: u64,
-        data: Vec<u8>,
-    ) -> Result<u64> {
+    pub async fn upload_chunk(&self, upload_url: &str, offset: u64, data: Vec<u8>) -> Result<u64> {
         let request = self
             .client
             .patch(upload_url)
@@ -604,10 +594,7 @@ impl TusProtocol {
             .body(data);
         let request = self.apply_headers(request);
 
-        let response = request
-            .send()
-            .await
-            .map_err(ZtusError::from)?;
+        let response = request.send().await.map_err(ZtusError::from)?;
 
         match response.status() {
             StatusCode::OK | StatusCode::NO_CONTENT => {
@@ -637,27 +624,19 @@ impl TusProtocol {
                 })
             }
             StatusCode::NOT_FOUND | StatusCode::GONE => Err(ZtusError::UploadTerminated),
-            StatusCode::PRECONDITION_FAILED => {
-                Err(ZtusError::ProtocolError(
-                    "Precondition failed - upload may have expired".to_string(),
-                ))
-            }
-            StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE => {
-                Err(ZtusError::ProtocolError(
-                    "Request header fields too large".to_string(),
-                ))
-            }
-            StatusCode::PAYLOAD_TOO_LARGE => {
-                Err(ZtusError::ProtocolError(
-                    "Upload too large for server".to_string(),
-                ))
-            }
-            status if status.is_server_error() => {
-                Err(ZtusError::ProtocolError(format!(
-                    "Server error during upload: {}",
-                    status
-                )))
-            }
+            StatusCode::PRECONDITION_FAILED => Err(ZtusError::ProtocolError(
+                "Precondition failed - upload may have expired".to_string(),
+            )),
+            StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE => Err(ZtusError::ProtocolError(
+                "Request header fields too large".to_string(),
+            )),
+            StatusCode::PAYLOAD_TOO_LARGE => Err(ZtusError::ProtocolError(
+                "Upload too large for server".to_string(),
+            )),
+            status if status.is_server_error() => Err(ZtusError::ProtocolError(format!(
+                "Server error during upload: {}",
+                status
+            ))),
             status => Err(ZtusError::ProtocolError(format!(
                 "PATCH request failed with status: {}",
                 status
@@ -673,18 +652,13 @@ impl TusProtocol {
             .header(TUS_RESUMABLE, TUS_VERSION);
         let request = self.apply_headers(request);
 
-        let response = request
-            .send()
-            .await
-            .map_err(ZtusError::from)?;
+        let response = request.send().await.map_err(ZtusError::from)?;
 
         match response.status() {
             StatusCode::OK | StatusCode::NO_CONTENT | StatusCode::NOT_FOUND => Ok(()),
-            StatusCode::FORBIDDEN => {
-                Err(ZtusError::ProtocolError(
-                    "Termination not supported by server".to_string(),
-                ))
-            }
+            StatusCode::FORBIDDEN => Err(ZtusError::ProtocolError(
+                "Termination not supported by server".to_string(),
+            )),
             status => Err(ZtusError::ProtocolError(format!(
                 "DELETE request failed with status: {}",
                 status
@@ -831,7 +805,10 @@ mod tests {
         let location = "files/resume/upload-id";
         let result = TusProtocol::resolve_url(base, location);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "http://example.com/upload/files/resume/upload-id");
+        assert_eq!(
+            result.unwrap(),
+            "http://example.com/upload/files/resume/upload-id"
+        );
     }
 
     #[test]
@@ -867,7 +844,10 @@ mod tests {
         let location = "/uploads/abc123?token=xyz";
         let result = TusProtocol::resolve_url(base, location);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "http://example.com/uploads/abc123?token=xyz");
+        assert_eq!(
+            result.unwrap(),
+            "http://example.com/uploads/abc123?token=xyz"
+        );
 
         // Location with fragment
         let base = "http://example.com/files";
@@ -881,7 +861,10 @@ mod tests {
         let location = "/uploads/abc123?token=xyz#section";
         let result = TusProtocol::resolve_url(base, location);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "http://example.com/uploads/abc123?token=xyz#section");
+        assert_eq!(
+            result.unwrap(),
+            "http://example.com/uploads/abc123?token=xyz#section"
+        );
     }
 
     #[test]
@@ -900,14 +883,20 @@ mod tests {
         let location = "https://storage.example.com/files/upload-id-123";
         let result = TusProtocol::resolve_url(base, location);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "https://storage.example.com/files/upload-id-123");
+        assert_eq!(
+            result.unwrap(),
+            "https://storage.example.com/files/upload-id-123"
+        );
 
         // Relative path without leading slash (base has trailing slash)
         let base = "http://uploads.example.com/api/";
         let location = "files/upload-id-123";
         let result = TusProtocol::resolve_url(base, location);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "http://uploads.example.com/api/files/upload-id-123");
+        assert_eq!(
+            result.unwrap(),
+            "http://uploads.example.com/api/files/upload-id-123"
+        );
 
         // Relative path without leading slash (base no trailing slash)
         let base = "http://uploads.example.com/api";
@@ -915,7 +904,10 @@ mod tests {
         let result = TusProtocol::resolve_url(base, location);
         assert!(result.is_ok());
         // "api" segment is replaced with "files"
-        assert_eq!(result.unwrap(), "http://uploads.example.com/files/upload-id-123");
+        assert_eq!(
+            result.unwrap(),
+            "http://uploads.example.com/files/upload-id-123"
+        );
     }
 
     #[test]
@@ -937,7 +929,7 @@ mod tests {
         // The url crate is quite permissive, so this might not error
         // Let's just verify it handles it gracefully
         match result {
-            Ok(_) => {}, // url crate accepted it
+            Ok(_) => {} // url crate accepted it
             Err(e) => assert!(e.to_string().contains("Failed to resolve Location URL")),
         }
     }

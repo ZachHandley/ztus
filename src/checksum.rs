@@ -9,8 +9,7 @@ use std::path::Path;
 
 /// Calculate checksum for a file
 pub fn calculate_file_checksum(path: &Path, algorithm: ChecksumAlgorithm) -> Result<String> {
-    let mut file = std::fs::File::open(path)
-        .map_err(ZtusError::IoError)?;
+    let mut file = std::fs::File::open(path).map_err(ZtusError::IoError)?;
 
     match algorithm {
         ChecksumAlgorithm::Sha1 => {
@@ -19,8 +18,7 @@ pub fn calculate_file_checksum(path: &Path, algorithm: ChecksumAlgorithm) -> Res
             let mut buffer = vec![0u8; 8192];
 
             loop {
-                let n = file.read(&mut buffer)
-                    .map_err(ZtusError::from)?;
+                let n = file.read(&mut buffer).map_err(ZtusError::from)?;
                 if n == 0 {
                     break;
                 }
@@ -35,8 +33,7 @@ pub fn calculate_file_checksum(path: &Path, algorithm: ChecksumAlgorithm) -> Res
             let mut buffer = vec![0u8; 8192];
 
             loop {
-                let n = file.read(&mut buffer)
-                    .map_err(ZtusError::from)?;
+                let n = file.read(&mut buffer).map_err(ZtusError::from)?;
                 if n == 0 {
                     break;
                 }
@@ -84,6 +81,9 @@ mod tests {
         let data = b"Hello, World!";
         let checksum = calculate_checksum(data, ChecksumAlgorithm::Sha256);
         // Known SHA256 hash for "Hello, World!"
-        assert_eq!(checksum, "dffd6021bb2bd5b0af676290809ec3a53191dd81c7f70a4b28688a362182986f");
+        assert_eq!(
+            checksum,
+            "dffd6021bb2bd5b0af676290809ec3a53191dd81c7f70a4b28688a362182986f"
+        );
     }
 }

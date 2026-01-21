@@ -30,7 +30,7 @@ pub const DEFAULT_ADAPTATION_INTERVAL: usize = 5;
 pub const DEFAULT_STABILITY_THRESHOLD: f64 = 0.1;
 
 /// Default state save interval (save every X percent of progress)
-pub const DEFAULT_STATE_SAVE_INTERVAL: usize = 5;  // Save every 5% of file progress
+pub const DEFAULT_STATE_SAVE_INTERVAL: usize = 5; // Save every 5% of file progress
 
 /// Configuration for adaptive chunk sizing during uploads
 ///
@@ -288,13 +288,20 @@ impl AppConfig {
 
         // Return default config if file doesn't exist
         if !config_path.exists() {
-            tracing::debug!("No config file found at {}, using defaults", config_path.display());
+            tracing::debug!(
+                "No config file found at {}, using defaults",
+                config_path.display()
+            );
             return Ok(Self::default());
         }
 
         // Read and parse the config file
         let contents = fs::read_to_string(&config_path).map_err(|e| {
-            ZtusError::ConfigError(format!("Failed to read config file {}: {}", config_path.display(), e))
+            ZtusError::ConfigError(format!(
+                "Failed to read config file {}: {}",
+                config_path.display(),
+                e
+            ))
         })?;
 
         // Parse the config file; replace invalid config with defaults
@@ -360,24 +367,25 @@ impl AppConfig {
         }
 
         // Serialize to TOML
-        let toml_string = toml::to_string_pretty(self).map_err(|e| {
-            ZtusError::ConfigError(format!("Failed to serialize config: {}", e))
-        })?;
+        let toml_string = toml::to_string_pretty(self)
+            .map_err(|e| ZtusError::ConfigError(format!("Failed to serialize config: {}", e)))?;
 
         // Write to file with a temporary file for atomicity
         let temp_path = config_path.with_extension("tmp");
         {
             let mut file = fs::File::create(&temp_path).map_err(|e| {
-                ZtusError::ConfigError(format!("Failed to create temp file {}: {}", temp_path.display(), e))
+                ZtusError::ConfigError(format!(
+                    "Failed to create temp file {}: {}",
+                    temp_path.display(),
+                    e
+                ))
             })?;
 
-            file.write_all(toml_string.as_bytes()).map_err(|e| {
-                ZtusError::ConfigError(format!("Failed to write config: {}", e))
-            })?;
+            file.write_all(toml_string.as_bytes())
+                .map_err(|e| ZtusError::ConfigError(format!("Failed to write config: {}", e)))?;
 
-            file.flush().map_err(|e| {
-                ZtusError::ConfigError(format!("Failed to flush config: {}", e))
-            })?;
+            file.flush()
+                .map_err(|e| ZtusError::ConfigError(format!("Failed to flush config: {}", e)))?;
         }
 
         // Atomic rename
@@ -406,7 +414,10 @@ impl AppConfig {
             ["upload", "timeout"] => Ok(self.upload.timeout.to_string()),
             ["upload", "verify_checksum"] => Ok(self.upload.verify_checksum.to_string()),
             ["upload", "checksum_algorithm"] => Ok(format!("{:?}", self.upload.checksum_algorithm)),
-            _ => Err(ZtusError::ConfigError(format!("Unknown config key: {}", key))),
+            _ => Err(ZtusError::ConfigError(format!(
+                "Unknown config key: {}",
+                key
+            ))),
         }
     }
 
@@ -426,14 +437,14 @@ impl AppConfig {
                 })?;
             }
             ["upload", "timeout"] => {
-                self.upload.timeout = value.parse().map_err(|_| {
-                    ZtusError::ConfigError(format!("Invalid timeout: {}", value))
-                })?;
+                self.upload.timeout = value
+                    .parse()
+                    .map_err(|_| ZtusError::ConfigError(format!("Invalid timeout: {}", value)))?;
             }
             ["upload", "verify_checksum"] => {
-                self.upload.verify_checksum = value.parse().map_err(|_| {
-                    ZtusError::ConfigError(format!("Invalid boolean: {}", value))
-                })?;
+                self.upload.verify_checksum = value
+                    .parse()
+                    .map_err(|_| ZtusError::ConfigError(format!("Invalid boolean: {}", value)))?;
             }
             ["upload", "checksum_algorithm"] => {
                 self.upload.checksum_algorithm = match value.to_lowercase().as_str() {

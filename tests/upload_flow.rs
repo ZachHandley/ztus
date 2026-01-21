@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use ztus::client::TusClient;
 use ztus::config::UploadConfig;
-use ztus::protocol::{TusExtension, TusProtocol, ServerCapabilities};
+use ztus::protocol::{ServerCapabilities, TusExtension, TusProtocol};
 use ztus::storage::{StateStorage, UploadState};
 
 #[test]
@@ -64,10 +64,7 @@ fn test_upload_state_progress() {
 
 #[test]
 fn test_protocol_client_creation() {
-    let client = TusProtocol::new(
-        "http://example.com".to_string(),
-        Duration::from_secs(30),
-    );
+    let client = TusProtocol::new("http://example.com".to_string(), Duration::from_secs(30));
     assert!(client.is_ok());
 }
 
@@ -131,12 +128,30 @@ fn test_client_creation() {
 #[test]
 fn test_tus_extension_parsing() {
     // Test from_str (via FromStr trait)
-    assert_eq!("creation".parse::<TusExtension>(), Ok(TusExtension::Creation));
-    assert_eq!("termination".parse::<TusExtension>(), Ok(TusExtension::Termination));
-    assert_eq!("checksum".parse::<TusExtension>(), Ok(TusExtension::Checksum));
-    assert_eq!("expiration".parse::<TusExtension>(), Ok(TusExtension::Expiration));
-    assert_eq!("concatenation".parse::<TusExtension>(), Ok(TusExtension::Concatenation));
-    assert_eq!("creation-with-upload".parse::<TusExtension>(), Ok(TusExtension::CreationWithUpload));
+    assert_eq!(
+        "creation".parse::<TusExtension>(),
+        Ok(TusExtension::Creation)
+    );
+    assert_eq!(
+        "termination".parse::<TusExtension>(),
+        Ok(TusExtension::Termination)
+    );
+    assert_eq!(
+        "checksum".parse::<TusExtension>(),
+        Ok(TusExtension::Checksum)
+    );
+    assert_eq!(
+        "expiration".parse::<TusExtension>(),
+        Ok(TusExtension::Expiration)
+    );
+    assert_eq!(
+        "concatenation".parse::<TusExtension>(),
+        Ok(TusExtension::Concatenation)
+    );
+    assert_eq!(
+        "creation-with-upload".parse::<TusExtension>(),
+        Ok(TusExtension::CreationWithUpload)
+    );
     assert!("invalid".parse::<TusExtension>().is_err());
 
     // Test as_str

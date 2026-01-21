@@ -99,7 +99,8 @@ impl DownloadManager {
                         state.total_size,
                         server_size
                     );
-                    self.start_new_download(url, output_path, server_size).await?
+                    self.start_new_download(url, output_path, server_size)
+                        .await?
                 } else {
                     // Verify local file size matches state offset
                     let local_size = if output_path.exists() {
@@ -123,7 +124,8 @@ impl DownloadManager {
             }
             None => {
                 let total_size = self.get_remote_size(url).await?;
-                self.start_new_download(url, output_path, total_size).await?
+                self.start_new_download(url, output_path, total_size)
+                    .await?
             }
         };
 
@@ -201,7 +203,9 @@ impl DownloadManager {
             .and_then(|v| v.to_str().ok())
             .and_then(|s| s.parse().ok())
             .ok_or_else(|| {
-                ZtusError::ProtocolError("Cannot determine file size (missing Content-Length)".to_string())
+                ZtusError::ProtocolError(
+                    "Cannot determine file size (missing Content-Length)".to_string(),
+                )
             })?;
 
         Ok(total_size)
@@ -283,10 +287,8 @@ impl DownloadManager {
             }
 
             // Calculate chunk size (don't exceed remaining bytes)
-            let chunk_end = std::cmp::min(
-                current_offset + self.chunk_size as u64 - 1,
-                total_size - 1,
-            );
+            let chunk_end =
+                std::cmp::min(current_offset + self.chunk_size as u64 - 1, total_size - 1);
             let range_header = format!("bytes={}-{}", current_offset, chunk_end);
 
             // Make request with Range header

@@ -173,9 +173,10 @@ impl BatchClient {
             return Err(ZtusError::ProtocolError(error_msg));
         }
 
-        response.json().await.map_err(|e| {
-            ZtusError::ProtocolError(format!("Failed to parse batch response: {}", e))
-        })
+        response
+            .json()
+            .await
+            .map_err(|e| ZtusError::ProtocolError(format!("Failed to parse batch response: {}", e)))
     }
 
     /// Get the status of a batch upload
@@ -230,9 +231,8 @@ pub fn collect_file_info(files: &[PathBuf]) -> Result<Vec<BatchFileRequest>> {
     files
         .iter()
         .map(|f| {
-            let metadata = std::fs::metadata(f).map_err(|e| {
-                ZtusError::FileNotFound(format!("{}: {}", f.display(), e))
-            })?;
+            let metadata = std::fs::metadata(f)
+                .map_err(|e| ZtusError::FileNotFound(format!("{}: {}", f.display(), e)))?;
 
             let filename = f
                 .file_name()
@@ -293,7 +293,11 @@ pub async fn execute_batch_upload(
         .create_batch(base_url, file_requests, None)
         .await?;
 
-    tracing::info!("Created batch {} with {} files", batch.batch_id, batch.uploads.len());
+    tracing::info!(
+        "Created batch {} with {} files",
+        batch.batch_id,
+        batch.uploads.len()
+    );
 
     // Upload each file
     let mut successful = 0;

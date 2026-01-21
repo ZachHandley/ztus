@@ -63,7 +63,7 @@ fn test_range_header_parsing() {
     let cases = vec![
         ("bytes=0-1023", "0", "1023"),
         ("bytes=1024-2047", "1024", "2047"),
-        ("bytes=0-", "0", ""), // Open-ended
+        ("bytes=0-", "0", ""),           // Open-ended
         ("bytes=100-100", "100", "100"), // Single byte
     ];
 

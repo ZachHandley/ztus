@@ -60,7 +60,10 @@ fn test_server_capabilities_max_size_check() {
 #[test]
 fn test_tus_extension_display_names() {
     assert_eq!(TusExtension::Creation.as_str(), "creation");
-    assert_eq!(TusExtension::CreationWithUpload.as_str(), "creation-with-upload");
+    assert_eq!(
+        TusExtension::CreationWithUpload.as_str(),
+        "creation-with-upload"
+    );
     assert_eq!(TusExtension::Termination.as_str(), "termination");
     assert_eq!(TusExtension::Checksum.as_str(), "checksum");
     assert_eq!(TusExtension::Expiration.as_str(), "expiration");
@@ -103,10 +106,7 @@ fn test_tus_extension_roundtrip() {
 fn test_server_capabilities_formatting() {
     let capabilities = ServerCapabilities {
         version: "1.0.0".to_string(),
-        extensions: vec![
-            TusExtension::Creation,
-            TusExtension::Termination,
-        ],
+        extensions: vec![TusExtension::Creation, TusExtension::Termination],
         max_size: Some(512 * 1024 * 1024), // 512MB
     };
 

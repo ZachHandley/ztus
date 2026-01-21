@@ -384,7 +384,9 @@ async fn download_handler(
     let client = TusClient::new().map_err(ErrorResponse::from)?;
 
     let output_path = PathBuf::from(&payload.output_path);
-    let chunk_size = payload.chunk_size.unwrap_or_else(|| client.upload_config().chunk_size);
+    let chunk_size = payload
+        .chunk_size
+        .unwrap_or_else(|| client.upload_config().chunk_size);
 
     client
         .download_with_chunk_size(&payload.url, &output_path, chunk_size)
@@ -506,7 +508,10 @@ mod tests {
         assert_eq!(config.timeout, 60);
         assert!(!config.resume);
         assert!(!config.verify_checksum);
-        assert!(matches!(config.checksum_algorithm, crate::config::ChecksumAlgorithm::Sha1));
+        assert!(matches!(
+            config.checksum_algorithm,
+            crate::config::ChecksumAlgorithm::Sha1
+        ));
         assert_eq!(config.headers.len(), 1);
         assert_eq!(config.metadata.len(), 1);
         assert!(!config.adaptive.enabled);

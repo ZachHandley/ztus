@@ -27,7 +27,11 @@ struct PythonProgressCallback {
 
 #[cfg(feature = "python")]
 impl ProgressReporter for PythonProgressCallback {
-    fn report_progress(&self, bytes_transferred: u64, total_bytes: u64) -> crate::error::Result<()> {
+    fn report_progress(
+        &self,
+        bytes_transferred: u64,
+        total_bytes: u64,
+    ) -> crate::error::Result<()> {
         Python::with_gil(|py| {
             self.callback
                 .call(py, (bytes_transferred, total_bytes), None)
@@ -54,7 +58,11 @@ fn arc_to_box(progress: Arc<dyn ProgressReporter>) -> Box<dyn ProgressReporter> 
     }
 
     impl ProgressReporter for ArcWrapper {
-        fn report_progress(&self, bytes_transferred: u64, total_bytes: u64) -> crate::error::Result<()> {
+        fn report_progress(
+            &self,
+            bytes_transferred: u64,
+            total_bytes: u64,
+        ) -> crate::error::Result<()> {
             self.inner.report_progress(bytes_transferred, total_bytes)
         }
 
@@ -284,7 +292,8 @@ impl PyTusClient {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
         rt.block_on(async {
-            let manager = crate::download::DownloadManager::with_progress(chunk_size, progress).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            let manager = crate::download::DownloadManager::with_progress(chunk_size, progress)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
             manager
                 .download_file(url, &output_path)
@@ -314,11 +323,9 @@ impl PyTusClient {
         };
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let manager = crate::download::DownloadManager::with_progress(
-                chunk_size,
-                arc_to_box(progress),
-            )
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            let manager =
+                crate::download::DownloadManager::with_progress(chunk_size, arc_to_box(progress))
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
             manager
                 .download_file(&url, &output_path)
