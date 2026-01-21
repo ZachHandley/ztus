@@ -32,7 +32,12 @@ jobs:
       should_publish: ${{ steps.check.outputs.should_publish }}
       should_release: ${{ steps.check.outputs.should_release }}
       version: ${{ steps.check.outputs.version }}
+      crates_version: ${{ steps.versions.outputs.crates_version }}
+      pypi_version: ${{ steps.versions.outputs.pypi_version }}
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Check release conditions
         id: check
         run: |
@@ -75,6 +80,42 @@ jobs:
           echo "should_publish=$should_publish" >> $GITHUB_OUTPUT
           echo "should_release=$should_release" >> $GITHUB_OUTPUT
           echo "version=$version" >> $GITHUB_OUTPUT
+
+      - name: Check published versions
+        id: versions
+        run: |
+          echo "=== Checking Published Versions ==="
+
+          # Check crates.io
+          CARGO_NAME=$(grep '^name = ' Cargo.toml | head -1 | sed 's/name = "\(.*\)"/\1/' || echo "unknown")
+          echo "Checking crates.io for: $CARGO_NAME"
+          CRATES_VERSION=$(curl -s "https://crates.io/api/v1/crates/$CARGO_NAME" | jq -r '.crate.max_version // empty' 2>/dev/null || echo "")
+          if [ -z "$CRATES_VERSION" ]; then
+            echo "crates.io: package not found (will publish)"
+            echo "crates_version=" >> $GITHUB_OUTPUT
+          else
+            echo "crates.io: $CRATES_VERSION"
+            echo "crates_version=$CRATES_VERSION" >> $GITHUB_OUTPUT
+          fi
+
+          # Check PyPI
+          PYPI_NAME=$(grep '^name = ' pyproject.toml | head -1 | sed 's/name = "\(.*\)"/\1/' || echo "unknown")
+          echo "Checking PyPI for: $PYPI_NAME"
+          PYPI_VERSION=$(curl -s "https://pypi.org/pypi/$PYPI_NAME/json" | jq -r '.info.version // empty' 2>/dev/null || echo "")
+          if [ -z "$PYPI_VERSION" ]; then
+            echo "PyPI: package not found (will publish)"
+            echo "pypi_version=" >> $GITHUB_OUTPUT
+          else
+            echo "PyPI: $PYPI_VERSION"
+            echo "pypi_version=$PYPI_VERSION" >> $GITHUB_OUTPUT
+          fi
+
+          # Summary
+          echo ""
+          echo "=== Summary ==="
+          echo "Target version: $version"
+          echo "crates.io: ${CRATES_VERSION:-none}"
+          echo "PyPI: ${PYPI_VERSION:-none}"
 
   build:
     name: Build ${{ matrix.target }}
@@ -215,47 +256,55 @@ jobs:
           path: ~/.cargo/git
           key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Get published crates.io version
+      - name: Check crates.io for target version
         id: cargo_version
         run: |
-          echo "=== Checking crates.io for published version ==="
+          echo "=== Checking crates.io for target version ==="
           CARGO_NAME=$(grep '^name = ' Cargo.toml | head -1 | sed 's/name = "\(.*\)"/\1/')
+          TARGET_VERSION="${{ needs.check-conditions.outputs.version }}"
           echo "Package name: $CARGO_NAME"
+          echo "Target version: $TARGET_VERSION"
 
-          # Try to get version from crates.io
-          CRATES_VERSION=$(curl -s "https://crates.io/api/v1/crates/$CARGO_NAME" | jq -r '.crate.max_version // empty' 2>/dev/null || echo "")
-
-          if [ -z "$CRATES_VERSION" ]; then
-            echo "Package not found on crates.io"
-            echo "version=needs-version" >> $GITHUB_OUTPUT
+          # Check if the target version exists on crates.io
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://crates.io/api/v1/crates/$CARGO_NAME/$TARGET_VERSION")
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "crates.io: target version exists"
+            echo "exists=true" >> $GITHUB_OUTPUT
+          elif [ "$HTTP_CODE" = "404" ]; then
+            echo "crates.io: target version missing"
+            echo "exists=false" >> $GITHUB_OUTPUT
           else
-            echo "Published version: $CRATES_VERSION"
-            echo "version=$CRATES_VERSION" >> $GITHUB_OUTPUT
+            echo "crates.io: unexpected response $HTTP_CODE"
+            exit 1
           fi
 
-      - name: Get published PyPI version
+      - name: Check PyPI for target version
         id: pypi_version
         run: |
-          echo "=== Checking PyPI for published version ==="
+          echo "=== Checking PyPI for target version ==="
           PYPI_NAME=$(grep '^name = ' pyproject.toml | head -1 | sed 's/name = "\(.*\)"/\1/')
+          TARGET_VERSION="${{ needs.check-conditions.outputs.version }}"
           echo "Package name: $PYPI_NAME"
+          echo "Target version: $TARGET_VERSION"
 
-          # Try to get version from PyPI
-          PYPI_VERSION=$(curl -s "https://pypi.org/pypi/$PYPI_NAME/json" | jq -r '.info.version // empty' 2>/dev/null || echo "")
-
-          if [ -z "$PYPI_VERSION" ]; then
-            echo "Package not found on PyPI"
-            echo "version=needs-version" >> $GITHUB_OUTPUT
+          # Check if the target version exists on PyPI
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/$PYPI_NAME/$TARGET_VERSION/json")
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "PyPI: target version exists"
+            echo "exists=true" >> $GITHUB_OUTPUT
+          elif [ "$HTTP_CODE" = "404" ]; then
+            echo "PyPI: target version missing"
+            echo "exists=false" >> $GITHUB_OUTPUT
           else
-            echo "Published version: $PYPI_VERSION"
-            echo "version=$PYPI_VERSION" >> $GITHUB_OUTPUT
+            echo "PyPI: unexpected response $HTTP_CODE"
+            exit 1
           fi
 
       - name: Display current published versions
         run: |
-          echo "=== Published Versions ==="
-          echo "crates.io: ${{ steps.cargo_version.outputs.version }}"
-          echo "PyPI: ${{ steps.pypi_version.outputs.version }}"
+          echo "=== Published Versions (target) ==="
+          echo "crates.io exists: ${{ steps.cargo_version.outputs.exists }}"
+          echo "PyPI exists: ${{ steps.pypi_version.outputs.exists }}"
 
       - name: Replace PKG_VERSION in files
         run: |
@@ -280,13 +329,13 @@ jobs:
         run: |
           VERSION="${{ needs.check-conditions.outputs.version }}"
           BRANCH_NAME="release-$VERSION"
-          CRATES_PUBLISHED="${{ steps.cargo_version.outputs.version }}"
-          PYPI_PUBLISHED="${{ steps.pypi_version.outputs.version }}"
+          CRATES_EXISTS="${{ steps.cargo_version.outputs.exists }}"
+          PYPI_EXISTS="${{ steps.pypi_version.outputs.exists }}"
 
           echo "=== Release Branch Setup: $BRANCH_NAME ==="
           echo "Target version: $VERSION"
-          echo "crates.io published: $CRATES_PUBLISHED"
-          echo "PyPI published: $PYPI_PUBLISHED"
+          echo "crates.io exists: $CRATES_EXISTS"
+          echo "PyPI exists: $PYPI_EXISTS"
 
           # Configure git
           git config user.name "github-actions[bot]"
@@ -310,15 +359,15 @@ jobs:
 
           FILES_UPDATED=false
 
-          # Update Cargo.toml if crates.io version doesn't match
-          if [ "$CRATES_PUBLISHED" != "$VERSION" ]; then
-            echo "Updating Cargo.toml for crates.io"
+          # Update Cargo.toml if any publish is needed (keeps Rust + PyPI versions aligned)
+          if [ "$CRATES_EXISTS" != "true" ] || [ "$PYPI_EXISTS" != "true" ]; then
+            echo "Updating Cargo.toml for release version"
             sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
             FILES_UPDATED=true
           fi
 
           # Update pyproject.toml and __init__.py if PyPI version doesn't match
-          if [ "$PYPI_PUBLISHED" != "$VERSION" ]; then
+          if [ "$PYPI_EXISTS" != "true" ]; then
             echo "Updating pyproject.toml and __init__.py for PyPI"
             sed -i "s/^version = \".*\"/version = \"$VERSION\"/" pyproject.toml
             sed -i "s/__version__ = \".*\"/__version__ = \"$VERSION\"/" python/ztus/__init__.py
@@ -356,31 +405,39 @@ jobs:
           echo "Version match confirmed!"
 
       - name: Run cargo test
+        if: steps.cargo_version.outputs.exists != 'true'
         run: cargo test --verbose
 
       - name: Run cargo clippy
+        if: steps.cargo_version.outputs.exists != 'true'
         run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Run cargo fmt check
+        if: steps.cargo_version.outputs.exists != 'true'
         run: cargo fmt --all -- --check
 
       - name: Build documentation
+        if: steps.cargo_version.outputs.exists != 'true'
         run: cargo doc --no-deps --all-features
 
       - name: Publish to crates.io
+        if: steps.cargo_version.outputs.exists != 'true'
         run: cargo publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
       - name: Set up Python
+        if: steps.pypi_version.outputs.exists != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
 
       - name: Install uv
+        if: steps.pypi_version.outputs.exists != 'true'
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
 
       - name: Publish to PyPI (via Trusted Publishers)
+        if: steps.pypi_version.outputs.exists != 'true'
         run: uv run maturin publish
         # Uses PyPI Trusted Publishers (OIDC) - no token needed
 
