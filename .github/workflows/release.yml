@@ -289,6 +289,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+          # Stash local changes from earlier step
+          git stash push -m "Pre-branch stash"
+
           # Fetch all branches
           git fetch --all
 
