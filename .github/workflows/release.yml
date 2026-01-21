@@ -377,10 +377,7 @@ jobs:
       - name: Install uv
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
 
-      - name: Install maturin with uv
-        run: uv pip install maturin
-
-      - name: Build and publish to PyPI (via Trusted Publishers)
+      - name: Publish to PyPI (via Trusted Publishers)
         run: uv run maturin publish
         # Uses PyPI Trusted Publishers (OIDC) - no token needed
 
