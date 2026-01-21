@@ -263,27 +263,11 @@ jobs:
 
       - name: Check crates.io for target version
         id: cargo_version
-        run: |
-          echo "=== Checking crates.io for target version ==="
-          CARGO_NAME=$(grep '^name = ' Cargo.toml | head -1 | sed 's/name = "\(.*\)"/\1/')
-          TARGET_VERSION="${{ needs.check-conditions.outputs.version }}"
-          echo "Package name: $CARGO_NAME"
-          echo "Target version: $TARGET_VERSION"
-
-          # Use cargo to check if the target version exists on crates.io
-          if cargo install "$CARGO_NAME" --version "$TARGET_VERSION" --dry-run > /tmp/cargo_check.log 2>&1; then
-            echo "crates.io: target version exists"
-            echo "exists=true" >> $GITHUB_OUTPUT
-          else
-            if grep -qiE "could not find|no matching package" /tmp/cargo_check.log; then
-              echo "crates.io: target version missing"
-              echo "exists=false" >> $GITHUB_OUTPUT
-            else
-              echo "crates.io: unexpected error"
-              cat /tmp/cargo_check.log
-              exit 1
-            fi
-          fi
+        continue-on-error: true
+        uses: https://github.com/baptiste0928/cargo-install@v3
+        with:
+          crate: ztus
+          version: ${{ needs.check-conditions.outputs.version }}
 
       - name: Check PyPI for target version
         id: pypi_version
@@ -326,37 +310,26 @@ jobs:
       - name: Display current published versions
         run: |
           echo "=== Published Versions (target) ==="
-          echo "crates.io exists: ${{ steps.cargo_version.outputs.exists }}"
+          echo "crates.io: ${{ steps.cargo_version.outputs.version }}"
           echo "PyPI exists: ${{ steps.pypi_version.outputs.exists }}"
-
-      - name: Replace PKG_VERSION in files
-        run: |
-          PKG_VERSION="${{ needs.check-conditions.outputs.version }}"
-          echo "Replacing PKG_VERSION with $PKG_VERSION"
-
-          # Replace in Cargo.toml
-          sed -i "s/^version = \"0.0.0-dev\"/version = \"$PKG_VERSION\"/" Cargo.toml
-
-          # Replace in pyproject.toml
-          sed -i "s/^version = \"0.0.0-dev\"/version = \"$PKG_VERSION\"/" pyproject.toml
-
-          # Replace in python/ztus/__init__.py
-          sed -i "s/__version__ = \"0.0.0-dev\"/__version__ = \"$PKG_VERSION\"/" python/ztus/__init__.py
-
-          echo "Updated versions:"
-          grep "^version = " Cargo.toml || true
-          grep "^version = " pyproject.toml || true
-          grep "__version__" python/ztus/__init__.py || true
 
       - name: Create and push release branch
         run: |
           VERSION="${{ needs.check-conditions.outputs.version }}"
           BRANCH_NAME="release-$VERSION"
-          CRATES_EXISTS="${{ steps.cargo_version.outputs.exists }}"
+          CRATES_VERSION="${{ steps.cargo_version.outputs.version }}"
           PYPI_EXISTS="${{ steps.pypi_version.outputs.exists }}"
+
+          # Check if CRATES_VERSION >= VERSION (using sort -V for version comparison)
+          if [ -n "$CRATES_VERSION" ] && [ "$(printf '%s\n' "$CRATES_VERSION" "$VERSION" | sort -V | head -n1)" = "$VERSION" ]; then
+            CRATES_EXISTS="true"
+          else
+            CRATES_EXISTS="false"
+          fi
 
           echo "=== Release Branch Setup: $BRANCH_NAME ==="
           echo "Target version: $VERSION"
+          echo "crates.io version: $CRATES_VERSION"
           echo "crates.io exists: $CRATES_EXISTS"
           echo "PyPI exists: $PYPI_EXISTS"
 
@@ -428,23 +401,23 @@ jobs:
           echo "Version match confirmed!"
 
       - name: Run cargo test
-        if: steps.cargo_version.outputs.exists != 'true'
+        if: steps.cargo_version.outputs.version != needs.check-conditions.outputs.version
         run: cargo test --verbose
 
       - name: Run cargo clippy
-        if: steps.cargo_version.outputs.exists != 'true'
+        if: steps.cargo_version.outputs.version != needs.check-conditions.outputs.version
         run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Run cargo fmt check
-        if: steps.cargo_version.outputs.exists != 'true'
+        if: steps.cargo_version.outputs.version != needs.check-conditions.outputs.version
         run: cargo fmt --all -- --check
 
       - name: Build documentation
-        if: steps.cargo_version.outputs.exists != 'true'
+        if: steps.cargo_version.outputs.version != needs.check-conditions.outputs.version
         run: cargo doc --no-deps --all-features
 
       - name: Publish to crates.io
-        if: steps.cargo_version.outputs.exists != 'true'
+        if: steps.cargo_version.outputs.version != needs.check-conditions.outputs.version
         run: cargo publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
