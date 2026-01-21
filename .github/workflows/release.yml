@@ -25,9 +25,58 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  check-conditions:
+    name: Check release conditions
+    runs-on: ubuntu-latest
+    outputs:
+      should_publish: ${{ steps.check.outputs.should_publish }}
+      should_release: ${{ steps.check.outputs.should_release }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - name: Check release conditions
+        id: check
+        run: |
+          echo "=== Release Conditions Check ==="
+          echo "Event: ${{ github.event_name }}"
+          echo "Ref: ${{ github.ref }}"
+
+          should_publish="false"
+          should_release="false"
+          version=""
+
+          # Check if this is a tag push
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/v}
+            echo "✓ Tag push detected: v$VERSION"
+            should_publish="true"
+            should_release="true"
+            version="$VERSION"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # Check if manual dispatch wants to publish
+            if [ "${{ inputs.publish }}" = "true" ] && [ -n "${{ inputs.version }}" ]; then
+              VERSION="${{ inputs.version }}"
+              VERSION="${VERSION#v}"  # Strip 'v' prefix if present
+              echo "✓ Manual publish requested with version: $VERSION"
+              should_publish="true"
+              should_release="false"  # No GitHub release for manual dispatch
+              version="$VERSION"
+            else
+              echo "ℹ Skipping: No tag, and publish=false or no version"
+              echo "  To publish: Push a tag (e.g., v1.2.3) or re-run with 'publish' checked"
+            fi
+          else
+            echo "ℹ Skipping: Regular push to main (no tag)"
+            echo "  Push a tag (e.g., v1.2.3) to publish and create a release"
+          fi
+
+          echo "should_publish=$should_publish" >> $GITHUB_OUTPUT
+          echo "should_release=$should_release" >> $GITHUB_OUTPUT
+          echo "version=$version" >> $GITHUB_OUTPUT
+
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    needs: check-conditions
     strategy:
       matrix:
         include:
@@ -134,91 +183,38 @@ jobs:
   publish-packages:
     name: Publish packages
     runs-on: ubuntu-latest
-    needs: build
+    needs: [check-conditions, build]
+    if: needs.check-conditions.outputs.should_publish == 'true'
 
     steps:
-      - name: Check release conditions
-        id: check_release
+      - name: Publishing version
         run: |
-          set -eo pipefail
-
-          echo "=== Release Conditions Check ==="
-          echo "Event: ${{ github.event_name }}"
-          echo "Ref: ${{ github.ref }}"
-          echo "Publish input: ${{ inputs.publish }}"
-
-          # Check if this is a tag push
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            VERSION=${GITHUB_REF#refs/tags/v}
-            echo "✓ Tag push detected: v$VERSION"
-            echo "should_publish=true" >> $GITHUB_OUTPUT
-            echo "version=$VERSION" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          # Check if this is a manual dispatch with publish=true
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            if [ "${{ inputs.publish }}" = "true" ]; then
-              if [ -n "${{ inputs.version }}" ]; then
-                VERSION="${{ inputs.version }}"
-                # Strip 'v' prefix if present
-                VERSION="${VERSION#v}"
-                echo "✓ Manual publish requested with version: $VERSION"
-                echo "should_publish=true" >> $GITHUB_OUTPUT
-                echo "version=$VERSION" >> $GITHUB_OUTPUT
-                exit 0
-              else
-                echo "✗ Error: Manual publish requires a version input"
-                echo "  Please provide a version (e.g., 1.2.3 or v1.2.3)"
-                exit 1
-              fi
-            else
-              echo "ℹ Skipping: publish=false"
-              echo "  To publish, re-run with 'publish' checked"
-              echo "should_publish=false" >> $GITHUB_OUTPUT
-              exit 0
-            fi
-          fi
-
-          echo "✗ Error: Must be a tag push or manual dispatch with publish=true"
-          exit 1
+          echo "=== Publishing packages ==="
+          echo "Version: ${{ needs.check-conditions.outputs.version }}"
 
       - name: Checkout repository
-        if: steps.check_release.outputs.should_publish == 'true'
         uses: actions/checkout@v4
 
       - name: Setup Rust toolchain
-        if: steps.check_release.outputs.should_publish == 'true'
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
 
       - name: Cache cargo registry
-        if: steps.check_release.outputs.should_publish == 'true'
         uses: actions/cache@v4
         with:
           path: ~/.cargo/registry
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Cache cargo index
-        if: steps.check_release.outputs.should_publish == 'true'
         uses: actions/cache@v4
         with:
           path: ~/.cargo/git
           key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Extract version from tag or input
-        id: get_version
-        if: steps.check_release.outputs.should_publish == 'true'
-        run: |
-          VERSION="${{ steps.check_release.outputs.version }}"
-          echo "Using version: $VERSION"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
       - name: Replace PKG_VERSION in files
-        if: steps.check_release.outputs.should_publish == 'true'
         run: |
-          PKG_VERSION="${{ steps.get_version.outputs.version }}"
+          PKG_VERSION="${{ needs.check-conditions.outputs.version }}"
           echo "Replacing PKG_VERSION with $PKG_VERSION"
 
           # Replace in Cargo.toml
@@ -235,10 +231,35 @@ jobs:
           grep "^version = " pyproject.toml || true
           grep "__version__" python/ztus/__init__.py || true
 
-      - name: Verify version matches
-        if: steps.check_release.outputs.should_publish == 'true'
+      - name: Create and push release branch
         run: |
-          EXPECTED_VERSION="${{ steps.get_version.outputs.version }}"
+          VERSION="${{ needs.check-conditions.outputs.version }}"
+          BRANCH_NAME="release-$VERSION"
+
+          echo "Creating release branch: $BRANCH_NAME"
+
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Create and checkout release branch
+          git checkout -b "$BRANCH_NAME"
+
+          # Update Cargo.lock after version changes
+          cargo update
+
+          # Commit all version changes including Cargo.lock
+          git add Cargo.toml Cargo.lock pyproject.toml python/ztus/__init__.py
+          git commit -m "Release v$VERSION"
+
+          # Push the branch
+          git push origin "$BRANCH_NAME"
+
+          echo "✓ Release branch pushed: $BRANCH_NAME"
+
+      - name: Verify version matches
+        run: |
+          EXPECTED_VERSION="${{ needs.check-conditions.outputs.version }}"
           CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)".*/\1/')
 
           echo "Expected version: $EXPECTED_VERSION"
@@ -252,93 +273,66 @@ jobs:
           echo "Version match confirmed!"
 
       - name: Run cargo test
-        if: steps.check_release.outputs.should_publish == 'true'
         run: cargo test --verbose
 
       - name: Run cargo clippy
-        if: steps.check_release.outputs.should_publish == 'true'
         run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Run cargo fmt check
-        if: steps.check_release.outputs.should_publish == 'true'
         run: cargo fmt --all -- --check
 
       - name: Build documentation
-        if: steps.check_release.outputs.should_publish == 'true'
         run: cargo doc --no-deps --all-features
 
       - name: Publish to crates.io
-        if: steps.check_release.outputs.should_publish == 'true'
-        run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
       - name: Set up Python
-        if: steps.check_release.outputs.should_publish == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
 
       - name: Install uv
-        if: steps.check_release.outputs.should_publish == 'true'
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
 
       - name: Install maturin with uv
-        if: steps.check_release.outputs.should_publish == 'true'
         run: uv pip install maturin
 
       - name: Build and publish to PyPI (via Trusted Publishers)
-        if: steps.check_release.outputs.should_publish == 'true'
         run: uv run maturin publish
         # Uses PyPI Trusted Publishers (OIDC) - no token needed
 
   release:
     name: Create Release
-    needs: [build, publish-packages]
+    needs: [check-conditions, build, publish-packages]
     runs-on: ubuntu-latest
+    if: needs.check-conditions.outputs.should_release == 'true'
 
     steps:
-      - name: Check if we should create a release
-        id: check_release
+      - name: Creating release for version
         run: |
-          echo "=== Release Conditions Check ==="
-          echo "Event: ${{ github.event_name }}"
-          echo "Ref: ${{ github.ref }}"
-
-          # Only create releases for tags
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            VERSION=${GITHUB_REF#refs/tags/v}
-            echo "✓ Creating release for tag: v$VERSION"
-            echo "should_release=true" >> $GITHUB_OUTPUT
-            echo "version=$VERSION" >> $GITHUB_OUTPUT
-          else
-            echo "ℹ Skipping: Not a tag push"
-            echo "  GitHub releases are only created for tags"
-            echo "  Push a tag (e.g., v1.2.3) to create a release"
-            echo "should_release=false" >> $GITHUB_OUTPUT
-          fi
+          echo "=== Creating GitHub Release ==="
+          echo "Version: ${{ needs.check-conditions.outputs.version }}"
 
       - name: Checkout repository
-        if: steps.check_release.outputs.should_release == 'true'
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Download all artifacts
-        if: steps.check_release.outputs.should_release == 'true'
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
       - name: Display structure of downloaded files
-        if: steps.check_release.outputs.should_release == 'true'
         run: ls -R artifacts
 
       - name: Generate release notes
         id: release_notes
-        if: steps.check_release.outputs.should_release == 'true'
         run: |
-          VERSION=${GITHUB_REF#refs/tags/}
+          VERSION="${{ needs.check-conditions.outputs.version }}"
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
 
           cat > release_notes.md << EOF
@@ -392,7 +386,6 @@ jobs:
           cat release_notes.md
 
       - name: Create GitHub Release
-        if: steps.check_release.outputs.should_release == 'true'
         uses: softprops/action-gh-release@v2
         with:
           body_path: release_notes.md
