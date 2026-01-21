@@ -39,6 +39,7 @@ jobs:
           echo "=== Release Conditions Check ==="
           echo "Event: ${{ github.event_name }}"
           echo "Ref: ${{ github.ref }}"
+          echo "Inputs: version='${{ inputs.version }}' publish='${{ inputs.publish }}'"
 
           should_publish="false"
           should_release="false"
@@ -52,17 +53,19 @@ jobs:
             should_release="true"
             version="$VERSION"
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            # Check if manual dispatch wants to publish
-            if [ "${{ inputs.publish }}" = "true" ] && [ -n "${{ inputs.version }}" ]; then
+            # Check if version input was provided
+            if [ -n "${{ inputs.version }}" ]; then
               VERSION="${{ inputs.version }}"
               VERSION="${VERSION#v}"  # Strip 'v' prefix if present
-              echo "✓ Manual publish requested with version: $VERSION"
-              should_publish="true"
-              should_release="false"  # No GitHub release for manual dispatch
+              echo "✓ Manual dispatch with version: $VERSION (publish=${{ inputs.publish }})"
               version="$VERSION"
+              # Only publish if publish=true, otherwise just set version
+              if [ "${{ inputs.publish }}" = "true" ]; then
+                should_publish="true"
+              fi
             else
-              echo "ℹ Skipping: No tag, and publish=false or no version"
-              echo "  To publish: Push a tag (e.g., v1.2.3) or re-run with 'publish' checked"
+              echo "ℹ Skipping: No version provided"
+              echo "  To publish: Re-run with a version input"
             fi
           else
             echo "ℹ Skipping: Regular push to main (no tag)"
