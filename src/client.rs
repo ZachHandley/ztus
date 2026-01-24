@@ -97,7 +97,19 @@ impl TusClient {
         output_path: &Path,
         chunk_size: usize,
     ) -> Result<()> {
-        let manager = DownloadManager::new(chunk_size)?;
+        self.download_with_options(url, output_path, chunk_size, Vec::new())
+            .await
+    }
+
+    /// Download a file from a URL with custom chunk size and headers
+    pub async fn download_with_options(
+        &self,
+        url: &str,
+        output_path: &Path,
+        chunk_size: usize,
+        headers: Vec<(String, String)>,
+    ) -> Result<()> {
+        let manager = DownloadManager::with_headers(chunk_size, headers)?;
 
         manager.download_file(url, output_path).await
     }

@@ -3,6 +3,7 @@
 //! This library provides the core functionality for the ztus CLI tool.
 
 pub mod batch;
+pub mod batch_download;
 pub mod checksum;
 pub mod client;
 pub mod config;

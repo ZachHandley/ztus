@@ -3,6 +3,7 @@
 //! This is the main entry point for the ztus command-line interface.
 
 mod batch;
+mod batch_download;
 mod checksum;
 mod client;
 mod config;
@@ -132,6 +133,10 @@ enum Commands {
         /// Chunk size in bytes (default: 5MB)
         #[arg(short, long)]
         chunk_size: Option<usize>,
+
+        /// Custom HTTP headers in key:value format (can be used multiple times)
+        #[arg(long, alias = "headers", value_name = "KEY:VALUE")]
+        header: Vec<String>,
     },
 
     /// List incomplete uploads
@@ -177,6 +182,13 @@ enum Commands {
     Batch {
         #[command(subcommand)]
         command: BatchCommands,
+    },
+
+    /// Batch download multiple files
+    #[command(name = "batch-download")]
+    BatchDownload {
+        #[command(subcommand)]
+        command: BatchDownloadCommands,
     },
 }
 
@@ -237,6 +249,192 @@ enum BatchCommands {
         /// Base URL of the upload server
         #[arg(short, long)]
         url: String,
+
+        /// Custom HTTP headers in key:value format (can be used multiple times)
+        #[arg(short = 'H', long = "header")]
+        headers: Vec<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum BatchDownloadCommands {
+    /// Create a batch download with a filter
+    Create {
+        /// Base URL of the download server
+        url: String,
+
+        /// Filter by filename prefix
+        #[arg(long)]
+        prefix: Option<String>,
+
+        /// Filter by filename suffix (extension)
+        #[arg(long)]
+        suffix: Option<String>,
+
+        /// Filter by filename contains
+        #[arg(long)]
+        contains: Option<String>,
+
+        /// Minimum file size in bytes
+        #[arg(long)]
+        min_size: Option<i64>,
+
+        /// Maximum file size in bytes
+        #[arg(long)]
+        max_size: Option<i64>,
+
+        /// Maximum number of files to include
+        #[arg(short, long)]
+        limit: Option<i32>,
+
+        /// Only include latest version of each file
+        #[arg(long)]
+        latest_only: bool,
+
+        /// Hours until batch expires (default: 1)
+        #[arg(long)]
+        expires_in_hours: Option<i32>,
+
+        /// Custom HTTP headers in key:value format (can be used multiple times)
+        #[arg(short = 'H', long = "header")]
+        headers: Vec<String>,
+    },
+
+    /// Check batch download status
+    Status {
+        /// Base URL of the download server
+        url: String,
+
+        /// Batch ID to check
+        batch_id: String,
+
+        /// Custom HTTP headers in key:value format (can be used multiple times)
+        #[arg(short = 'H', long = "header")]
+        headers: Vec<String>,
+    },
+
+    /// Execute a batch download (create, wait, and download all files)
+    Execute {
+        /// Base URL of the download server
+        url: String,
+
+        /// Output directory for downloaded files
+        #[arg(short, long)]
+        output: String,
+
+        /// Filter by filename prefix
+        #[arg(long)]
+        prefix: Option<String>,
+
+        /// Filter by filename suffix (extension)
+        #[arg(long)]
+        suffix: Option<String>,
+
+        /// Filter by filename contains
+        #[arg(long)]
+        contains: Option<String>,
+
+        /// Minimum file size in bytes
+        #[arg(long)]
+        min_size: Option<i64>,
+
+        /// Maximum file size in bytes
+        #[arg(long)]
+        max_size: Option<i64>,
+
+        /// Maximum number of files to include
+        #[arg(short, long)]
+        limit: Option<i32>,
+
+        /// Only include latest version of each file
+        #[arg(long)]
+        latest_only: bool,
+
+        /// Chunk size in bytes (default: 5MB)
+        #[arg(long)]
+        chunk_size: Option<usize>,
+
+        /// Custom HTTP headers in key:value format (can be used multiple times)
+        #[arg(short = 'H', long = "header")]
+        headers: Vec<String>,
+    },
+
+    /// List all batch downloads
+    List {
+        /// Base URL of the download server
+        url: String,
+
+        /// Filter by status (pending, preparing, ready, in_progress, completed, failed, expired)
+        #[arg(long)]
+        status: Option<String>,
+
+        /// Maximum number of batches to list
+        #[arg(short, long)]
+        limit: Option<i32>,
+
+        /// Custom HTTP headers in key:value format (can be used multiple times)
+        #[arg(short = 'H', long = "header")]
+        headers: Vec<String>,
+    },
+
+    /// Preview files matching a filter (without creating a batch)
+    Preview {
+        /// Base URL of the download server
+        url: String,
+
+        /// Filter by filename prefix
+        #[arg(long)]
+        prefix: Option<String>,
+
+        /// Filter by filename suffix (extension)
+        #[arg(long)]
+        suffix: Option<String>,
+
+        /// Filter by filename contains
+        #[arg(long)]
+        contains: Option<String>,
+
+        /// Minimum file size in bytes
+        #[arg(long)]
+        min_size: Option<i64>,
+
+        /// Maximum file size in bytes
+        #[arg(long)]
+        max_size: Option<i64>,
+
+        /// Maximum number of files to include
+        #[arg(short, long)]
+        limit: Option<i32>,
+
+        /// Only include latest version of each file
+        #[arg(long)]
+        latest_only: bool,
+
+        /// Custom HTTP headers in key:value format (can be used multiple times)
+        #[arg(short = 'H', long = "header")]
+        headers: Vec<String>,
+    },
+
+    /// Get download URLs for a batch
+    Download {
+        /// Base URL of the download server
+        url: String,
+
+        /// Batch ID
+        batch_id: String,
+
+        /// Custom HTTP headers in key:value format (can be used multiple times)
+        #[arg(short = 'H', long = "header")]
+        headers: Vec<String>,
+    },
+
+    /// Delete a batch download
+    Delete {
+        /// Base URL of the download server
+        url: String,
+
+        /// Batch ID to delete
+        batch_id: String,
 
         /// Custom HTTP headers in key:value format (can be used multiple times)
         #[arg(short = 'H', long = "header")]
@@ -540,6 +738,7 @@ async fn main() -> Result<()> {
             url,
             output,
             chunk_size,
+            header,
         } => {
             tracing::info!("Downloading {} to {}", url, output);
 
@@ -547,8 +746,17 @@ async fn main() -> Result<()> {
 
             let size = chunk_size.unwrap_or_else(|| client.upload_config().chunk_size);
 
+            // Parse custom headers
+            let parsed_headers = if !header.is_empty() {
+                let headers = parse_headers(&header)?;
+                tracing::debug!("Parsed headers: {:?}", headers);
+                headers
+            } else {
+                Vec::new()
+            };
+
             client
-                .download_with_chunk_size(&url, output_path, size)
+                .download_with_options(&url, output_path, size, parsed_headers)
                 .await?;
         }
 
@@ -788,6 +996,326 @@ async fn main() -> Result<()> {
 
                 let status = batch_client.get_batch_status(&url, &batch_id).await?;
                 println!("{}", status);
+            }
+        },
+
+        Commands::BatchDownload { command } => match command {
+            BatchDownloadCommands::Create {
+                url,
+                prefix,
+                suffix,
+                contains,
+                min_size,
+                max_size,
+                limit,
+                latest_only,
+                expires_in_hours,
+                headers,
+            } => {
+                // Parse headers
+                let parsed_headers = parse_headers(&headers)?;
+
+                // Build filter
+                let mut filter = batch_download::FileFilter::new();
+                if let Some(p) = prefix {
+                    filter = filter.with_prefix(p);
+                }
+                if let Some(s) = suffix {
+                    filter = filter.with_suffix(s);
+                }
+                if let Some(c) = contains {
+                    filter = filter.with_contains(c);
+                }
+                if let Some(size) = min_size {
+                    filter = filter.with_min_size(size);
+                }
+                if let Some(size) = max_size {
+                    filter = filter.with_max_size(size);
+                }
+                if let Some(l) = limit {
+                    filter = filter.with_limit(l);
+                }
+                if latest_only {
+                    filter = filter.with_latest_only(true);
+                }
+
+                // Create batch client
+                let batch_client = batch_download::BatchDownloadClient::with_headers(
+                    std::time::Duration::from_secs(client.upload_config().timeout),
+                    parsed_headers,
+                )?;
+
+                let request = batch_download::BatchDownloadCreateRequest {
+                    filter,
+                    output_format: Some("urls".to_string()),
+                    metadata: None,
+                    expires_in_hours,
+                };
+
+                let response = batch_client.create_batch(&url, request).await?;
+
+                println!("Batch created successfully!");
+                println!("  Batch ID: {}", response.batch_id);
+                println!("  Status: {}", response.status);
+                println!("  Total Files: {}", response.total_files);
+                println!(
+                    "  Total Size: {} bytes ({:.2} MB)",
+                    response.total_size,
+                    response.total_size as f64 / 1024.0 / 1024.0
+                );
+                println!("  Status URL: {}", response.status_url);
+                if let Some(ref expires_at) = response.expires_at {
+                    println!("  Expires At: {}", expires_at);
+                }
+            }
+
+            BatchDownloadCommands::Status {
+                url,
+                batch_id,
+                headers,
+            } => {
+                // Parse headers
+                let parsed_headers = parse_headers(&headers)?;
+
+                // Create batch client
+                let batch_client = batch_download::BatchDownloadClient::with_headers(
+                    std::time::Duration::from_secs(client.upload_config().timeout),
+                    parsed_headers,
+                )?;
+
+                let status = batch_client.get_status(&url, &batch_id).await?;
+                println!("{}", status);
+            }
+
+            BatchDownloadCommands::Execute {
+                url,
+                output,
+                prefix,
+                suffix,
+                contains,
+                min_size,
+                max_size,
+                limit,
+                latest_only,
+                chunk_size,
+                headers,
+            } => {
+                // Parse headers
+                let parsed_headers = parse_headers(&headers)?;
+
+                // Build filter
+                let mut filter = batch_download::FileFilter::new();
+                if let Some(p) = prefix {
+                    filter = filter.with_prefix(p);
+                }
+                if let Some(s) = suffix {
+                    filter = filter.with_suffix(s);
+                }
+                if let Some(c) = contains {
+                    filter = filter.with_contains(c);
+                }
+                if let Some(size) = min_size {
+                    filter = filter.with_min_size(size);
+                }
+                if let Some(size) = max_size {
+                    filter = filter.with_max_size(size);
+                }
+                if let Some(l) = limit {
+                    filter = filter.with_limit(l);
+                }
+                if latest_only {
+                    filter = filter.with_latest_only(true);
+                }
+
+                let output_path = std::path::Path::new(&output);
+
+                let config = batch_download::BatchDownloadConfig {
+                    timeout: client.upload_config().timeout,
+                    chunk_size: chunk_size.unwrap_or(5 * 1024 * 1024),
+                    ..Default::default()
+                };
+
+                println!("Starting batch download...");
+
+                let result = batch_download::execute_batch_download(
+                    &url,
+                    filter,
+                    output_path,
+                    &config,
+                    parsed_headers,
+                )
+                .await?;
+
+                println!("\nBatch Download Complete!");
+                println!("  Batch ID: {}", result.batch_id);
+                println!(
+                    "  Downloaded: {}/{} files",
+                    result.successful,
+                    result.successful + result.failed
+                );
+                println!(
+                    "  Total Bytes: {} ({:.2} MB)",
+                    result.bytes_downloaded,
+                    result.bytes_downloaded as f64 / 1024.0 / 1024.0
+                );
+
+                if result.failed > 0 {
+                    eprintln!("\nFailed downloads:");
+                    for (filename, error) in &result.errors {
+                        eprintln!("  - {}: {}", filename, error);
+                    }
+                    std::process::exit(1);
+                } else {
+                    println!("All files downloaded successfully!");
+                }
+            }
+
+            BatchDownloadCommands::List {
+                url,
+                status,
+                limit,
+                headers,
+            } => {
+                // Parse headers
+                let parsed_headers = parse_headers(&headers)?;
+
+                // Create batch client
+                let batch_client = batch_download::BatchDownloadClient::with_headers(
+                    std::time::Duration::from_secs(client.upload_config().timeout),
+                    parsed_headers,
+                )?;
+
+                let batches = batch_client
+                    .list_batches(&url, status.as_deref(), limit, None)
+                    .await?;
+
+                if batches.is_empty() {
+                    println!("No batch downloads found.");
+                } else {
+                    println!("Batch Downloads:");
+                    println!("================");
+                    for batch in batches {
+                        println!();
+                        println!("  Batch ID: {}", batch.batch_id);
+                        println!("  Status: {}", batch.status);
+                        println!(
+                            "  Progress: {}/{} files ({:.1}%)",
+                            batch.downloaded_files,
+                            batch.total_files,
+                            batch.progress * 100.0
+                        );
+                        println!(
+                            "  Total Size: {} bytes ({:.2} MB)",
+                            batch.total_size,
+                            batch.total_size as f64 / 1024.0 / 1024.0
+                        );
+                        if let Some(ref expires_at) = batch.expires_at {
+                            println!("  Expires At: {}", expires_at);
+                        }
+                    }
+                }
+            }
+
+            BatchDownloadCommands::Preview {
+                url,
+                prefix,
+                suffix,
+                contains,
+                min_size,
+                max_size,
+                limit,
+                latest_only,
+                headers,
+            } => {
+                // Parse headers
+                let parsed_headers = parse_headers(&headers)?;
+
+                // Build filter
+                let mut filter = batch_download::FileFilter::new();
+                if let Some(p) = prefix {
+                    filter = filter.with_prefix(p);
+                }
+                if let Some(s) = suffix {
+                    filter = filter.with_suffix(s);
+                }
+                if let Some(c) = contains {
+                    filter = filter.with_contains(c);
+                }
+                if let Some(size) = min_size {
+                    filter = filter.with_min_size(size);
+                }
+                if let Some(size) = max_size {
+                    filter = filter.with_max_size(size);
+                }
+                if let Some(l) = limit {
+                    filter = filter.with_limit(l);
+                }
+                if latest_only {
+                    filter = filter.with_latest_only(true);
+                }
+
+                // Create batch client
+                let batch_client = batch_download::BatchDownloadClient::with_headers(
+                    std::time::Duration::from_secs(client.upload_config().timeout),
+                    parsed_headers,
+                )?;
+
+                let preview = batch_client.preview_filter(&url, filter).await?;
+                println!("{}", preview);
+            }
+
+            BatchDownloadCommands::Download {
+                url,
+                batch_id,
+                headers,
+            } => {
+                // Parse headers
+                let parsed_headers = parse_headers(&headers)?;
+
+                // Create batch client
+                let batch_client = batch_download::BatchDownloadClient::with_headers(
+                    std::time::Duration::from_secs(client.upload_config().timeout),
+                    parsed_headers,
+                )?;
+
+                let urls_response = batch_client.get_download_urls(&url, &batch_id).await?;
+
+                println!("Download URLs for Batch: {}", urls_response.batch_id);
+                println!("========================");
+                println!();
+                println!("Total Files: {}", urls_response.total_files);
+                println!(
+                    "Total Size: {} bytes ({:.2} MB)",
+                    urls_response.total_size,
+                    urls_response.total_size as f64 / 1024.0 / 1024.0
+                );
+                if let Some(ref expires_at) = urls_response.expires_at {
+                    println!("Expires At: {}", expires_at);
+                }
+                println!();
+                println!("Files:");
+                for file in &urls_response.files {
+                    println!("  - {} ({} bytes)", file.filename, file.size);
+                    println!("    URL: {}", file.download_url);
+                }
+            }
+
+            BatchDownloadCommands::Delete {
+                url,
+                batch_id,
+                headers,
+            } => {
+                // Parse headers
+                let parsed_headers = parse_headers(&headers)?;
+
+                // Create batch client
+                let batch_client = batch_download::BatchDownloadClient::with_headers(
+                    std::time::Duration::from_secs(client.upload_config().timeout),
+                    parsed_headers,
+                )?;
+
+                batch_client.delete_batch(&url, &batch_id).await?;
+                println!("Batch {} deleted successfully.", batch_id);
             }
         },
     }

@@ -17,11 +17,18 @@ pub struct DownloadManager {
     storage: StateStorage,
     max_retries: usize,
     progress: Box<dyn ProgressReporter>,
+    /// Custom HTTP headers to include in requests
+    headers: Vec<(String, String)>,
 }
 
 impl DownloadManager {
     /// Create a new download manager
     pub fn new(chunk_size: usize) -> Result<Self> {
+        Self::with_headers(chunk_size, Vec::new())
+    }
+
+    /// Create a new download manager with custom headers
+    pub fn with_headers(chunk_size: usize, headers: Vec<(String, String)>) -> Result<Self> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
@@ -40,12 +47,23 @@ impl DownloadManager {
             storage,
             max_retries: 3,
             progress: Box::new(TerminalProgress::new(0)),
+            headers,
         })
     }
 
     /// Create a new download manager with a custom progress reporter
     #[allow(dead_code)]
     pub fn with_progress(chunk_size: usize, progress: Box<dyn ProgressReporter>) -> Result<Self> {
+        Self::with_progress_and_headers(chunk_size, progress, Vec::new())
+    }
+
+    /// Create a new download manager with a custom progress reporter and headers
+    #[allow(dead_code)]
+    pub fn with_progress_and_headers(
+        chunk_size: usize,
+        progress: Box<dyn ProgressReporter>,
+        headers: Vec<(String, String)>,
+    ) -> Result<Self> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
@@ -64,6 +82,7 @@ impl DownloadManager {
             storage,
             max_retries: 3,
             progress,
+            headers,
         })
     }
 
@@ -72,6 +91,17 @@ impl DownloadManager {
     pub fn with_max_retries(mut self, max_retries: usize) -> Self {
         self.max_retries = max_retries;
         self
+    }
+
+    /// Apply custom headers to a request builder
+    fn apply_headers(
+        &self,
+        mut request: reqwest::RequestBuilder,
+    ) -> reqwest::RequestBuilder {
+        for (key, value) in &self.headers {
+            request = request.header(key.as_str(), value.as_str());
+        }
+        request
     }
 
     /// Download a file with resume support
@@ -183,12 +213,9 @@ impl DownloadManager {
 
     /// Get remote file size via HEAD request
     async fn get_remote_size(&self, url: &str) -> Result<u64> {
-        let response = self
-            .client
-            .head(url)
-            .send()
-            .await
-            .map_err(ZtusError::from)?;
+        let request = self.client.head(url);
+        let request = self.apply_headers(request);
+        let response = request.send().await.map_err(ZtusError::from)?;
 
         if !response.status().is_success() {
             return Err(ZtusError::ProtocolError(format!(
@@ -291,14 +318,10 @@ impl DownloadManager {
                 std::cmp::min(current_offset + self.chunk_size as u64 - 1, total_size - 1);
             let range_header = format!("bytes={}-{}", current_offset, chunk_end);
 
-            // Make request with Range header
-            let response = self
-                .client
-                .get(url)
-                .header("Range", range_header)
-                .send()
-                .await
-                .map_err(ZtusError::from)?;
+            // Make request with Range header and custom headers
+            let request = self.client.get(url).header("Range", range_header);
+            let request = self.apply_headers(request);
+            let response = request.send().await.map_err(ZtusError::from)?;
 
             let status = response.status();
 
@@ -362,12 +385,9 @@ impl DownloadManager {
 
     /// Check if server supports range requests
     async fn check_range_support(&self, url: &str) -> Result<bool> {
-        let response = self
-            .client
-            .head(url)
-            .send()
-            .await
-            .map_err(ZtusError::from)?;
+        let request = self.client.head(url);
+        let request = self.apply_headers(request);
+        let response = request.send().await.map_err(ZtusError::from)?;
 
         let accept_ranges = response
             .headers()

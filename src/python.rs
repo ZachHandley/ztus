@@ -271,13 +271,15 @@ impl PyTusClient {
     ///     output_path: Where to save the file
     ///     chunk_size: Optional chunk size in bytes (default 5MB)
     ///     progress_callback: Optional callback function(bytes_transferred, total_bytes)
-    #[pyo3(signature = (url, output_path, chunk_size=None, progress_callback=None))]
+    ///     headers: Optional dict of HTTP headers to include in requests
+    #[pyo3(signature = (url, output_path, chunk_size=None, progress_callback=None, headers=None))]
     fn download(
         &self,
         url: &str,
         output_path: &str,
         chunk_size: Option<usize>,
         progress_callback: Option<Py<PyAny>>,
+        headers: Option<std::collections::HashMap<String, String>>,
     ) -> PyResult<()> {
         let output_path = PathBuf::from(output_path);
         let chunk_size = chunk_size.unwrap_or(5 * 1024 * 1024); // 5 MB default
@@ -288,12 +290,21 @@ impl PyTusClient {
             Box::new(crate::progress::NoOpProgress)
         };
 
+        // Convert headers HashMap to Vec<(String, String)>
+        let headers_vec: Vec<(String, String)> = headers
+            .map(|h| h.into_iter().collect())
+            .unwrap_or_default();
+
         let rt = tokio::runtime::Runtime::new()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
         rt.block_on(async {
-            let manager = crate::download::DownloadManager::with_progress(chunk_size, progress)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            let manager = crate::download::DownloadManager::with_progress_and_headers(
+                chunk_size,
+                progress,
+                headers_vec,
+            )
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
             manager
                 .download_file(url, &output_path)
@@ -303,7 +314,14 @@ impl PyTusClient {
     }
 
     /// Download a file asynchronously
-    #[pyo3(signature = (url, output_path, chunk_size=None, progress_callback=None))]
+    ///
+    /// Args:
+    ///     url: URL to download from
+    ///     output_path: Where to save the file
+    ///     chunk_size: Optional chunk size in bytes (default 5MB)
+    ///     progress_callback: Optional callback function(bytes_transferred, total_bytes)
+    ///     headers: Optional dict of HTTP headers to include in requests
+    #[pyo3(signature = (url, output_path, chunk_size=None, progress_callback=None, headers=None))]
     fn download_async<'a>(
         &self,
         py: Python<'a>,
@@ -311,6 +329,7 @@ impl PyTusClient {
         output_path: &str,
         chunk_size: Option<usize>,
         progress_callback: Option<Py<PyAny>>,
+        headers: Option<std::collections::HashMap<String, String>>,
     ) -> PyResult<Bound<'a, PyAny>> {
         let url = url.to_string();
         let output_path = PathBuf::from(output_path);
@@ -322,10 +341,18 @@ impl PyTusClient {
             Arc::new(crate::progress::NoOpProgress) as Arc<dyn ProgressReporter>
         };
 
+        // Convert headers HashMap to Vec<(String, String)>
+        let headers_vec: Vec<(String, String)> = headers
+            .map(|h| h.into_iter().collect())
+            .unwrap_or_default();
+
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let manager =
-                crate::download::DownloadManager::with_progress(chunk_size, arc_to_box(progress))
-                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            let manager = crate::download::DownloadManager::with_progress_and_headers(
+                chunk_size,
+                arc_to_box(progress),
+                headers_vec,
+            )
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
             manager
                 .download_file(&url, &output_path)
