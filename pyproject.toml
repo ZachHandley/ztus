@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "ztus"
-version = "0.0.0-dev"  # Replaced by PKG_VERSION in CI/CD
+version = "1.0.14"  # Replaced by PKG_VERSION in CI/CD
 description = "A blazingly fast Rust CLI tool for resumable uploads using the TUS protocol and chunked downloads"
 readme = "PYTHON_README.md"
 requires-python = ">=3.11,<3.12"
