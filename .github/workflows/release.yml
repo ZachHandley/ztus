@@ -264,7 +264,7 @@ jobs:
       - name: Check crates.io for target version
         id: cargo_version
         continue-on-error: true
-        uses: https://github.com/baptiste0928/cargo-install@v3
+        uses: baptiste0928/cargo-install@v3
         with:
           crate: ztus
           version: ${{ needs.check-conditions.outputs.version }}
